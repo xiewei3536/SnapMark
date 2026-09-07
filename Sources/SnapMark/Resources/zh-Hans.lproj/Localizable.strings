@@ -1,0 +1,240 @@
+/* SnapMark — 简体中文 */
+
+"lang.system" = "跟随系统";
+
+/* 动作／快捷键 */
+"action.capture_region" = "区域截图";
+"action.capture_fullscreen" = "全屏截图";
+"action.capture_window" = "窗口截图";
+"action.record_region" = "区域录屏";
+"action.record_fullscreen" = "全屏录屏";
+"action.ocr_region" = "提取文字（OCR）";
+"action.pin_region" = "钉选区域到屏幕";
+"action.repeat_last" = "重复上次区域";
+
+/* 菜单 */
+"menu.stop_recording" = "停止录制";
+"menu.discard_recording" = "丢弃录制";
+"menu.recent" = "最近的截图";
+"menu.open_folder" = "打开保存文件夹";
+"menu.preferences" = "偏好设置…";
+"menu.grant_permission" = "授予屏幕录制权限…";
+"menu.quit" = "退出 SnapMark";
+"menu.edit" = "编辑";
+
+/* 选取覆盖层 */
+"overlay.hint" = "拖拽选取范围 · 点击窗口自动吸附 · Esc 取消";
+"overlay.hint_window" = "点击要截取的窗口 · Esc 取消";
+"overlay.capture" = "截图";
+"overlay.record" = "录屏";
+"overlay.pin" = "钉选";
+"overlay.ocr" = "取字";
+"overlay.cancel_help" = "取消（Esc）";
+
+/* 录制 HUD */
+"hud.fullscreen" = "全屏";
+"hud.stop" = "停止";
+"hud.stop_help" = "停止并保存录制";
+"hud.discard_help" = "丢弃这段录制";
+
+/* 录制完成面板 */
+"done.recording_saved" = "录制已保存";
+"done.open" = "打开";
+"done.reveal" = "在访达中显示";
+"done.copy" = "复制";
+"done.exporting_gif" = "正在导出 GIF…";
+
+/* 编辑器 */
+"tool.select" = "选择／移动";
+"tool.pen" = "画笔";
+"tool.highlighter" = "荧光笔";
+"tool.line" = "直线";
+"tool.arrow" = "箭头";
+"tool.rect" = "矩形";
+"tool.ellipse" = "椭圆";
+"tool.text" = "文字";
+"tool.mosaic" = "马赛克／模糊";
+"tool.badge" = "步骤序号";
+"tool.crop" = "裁剪";
+
+"editor.color" = "颜色";
+"editor.custom_color" = "自定义颜色";
+"editor.size" = "线宽／字号";
+"editor.stroke_width" = "线条粗细";
+"editor.font_size" = "字号大小";
+"editor.pixelate" = "马赛克";
+"editor.blur" = "模糊";
+"editor.apply_crop" = "应用裁剪";
+"editor.cancel_crop" = "取消";
+"editor.undo" = "撤销（⌘Z）";
+"editor.redo" = "重做（⇧⌘Z）";
+"editor.ocr" = "取字";
+"editor.ocr_help" = "识别图片中的文字并复制";
+"editor.ocr_result" = "识别结果（已复制）";
+"editor.pin" = "钉选";
+"editor.pin_help" = "让这张图浮在所有窗口上方";
+"editor.copy" = "复制";
+"editor.copy_help" = "复制到剪贴板";
+"editor.save" = "保存";
+"editor.save_as" = "另存为…";
+"editor.text_placeholder" = "输入文字…";
+"editor.zoom_in" = "放大（⌘+）";
+"editor.zoom_out" = "缩小（⌘−）";
+"editor.fit" = "适应窗口";
+
+"hint.select" = "点击选择 · 拖拽移动 · 双击文字可编辑 · ⌫ 删除";
+"hint.draw" = "拖拽即可绘制";
+"hint.shape" = "拖拽绘制 · 按住 ⇧ 可画正方形／45° 直线";
+"hint.text" = "点击任意位置添加文字";
+"hint.badge" = "点击放置编号步骤 ①②③";
+"hint.crop" = "拖拽选择裁剪范围，然后点“应用裁剪”";
+
+/* 钉选 */
+"pin.edit" = "标注";
+"pin.copy" = "复制";
+"pin.save" = "保存";
+"pin.opacity" = "不透明度";
+"pin.close" = "关闭";
+"pin.hint" = "滚轮缩放 · 双击关闭";
+
+/* 提示 */
+"toast.captured" = "已截图";
+"toast.copied" = "已复制到剪贴板";
+"toast.file_copied" = "文件已复制到剪贴板";
+"toast.saved" = "已保存";
+"toast.save_failed" = "无法保存文件";
+"toast.capture_failed" = "截图失败";
+"toast.record_failed" = "无法开始录制";
+"toast.open_failed" = "无法打开文件";
+"toast.ocr_copied" = "文字已识别并复制";
+"toast.ocr_empty" = "未检测到文字";
+"toast.gif_saved" = "GIF 已导出";
+"toast.gif_failed" = "GIF 导出失败";
+
+/* 权限 */
+"perm.title" = "需要“屏幕录制”权限";
+"perm.open_settings" = "打开系统设置";
+
+/* 错误 */
+"error.no_permission" = "尚未授予屏幕录制权限。";
+"error.display_not_found" = "找不到显示器。";
+"error.capture_failed" = "截取失败。";
+
+/* 偏好设置 */
+"prefs.title" = "SnapMark 偏好设置";
+"prefs.general" = "通用";
+"prefs.recording" = "录制";
+"prefs.hotkeys" = "快捷键";
+"prefs.about" = "关于";
+"prefs.language" = "语言";
+"prefs.launch_at_login" = "登录时启动";
+"prefs.after_capture" = "截图之后";
+"prefs.after_capture_action" = "接着";
+"settings.after.editor" = "打开编辑器";
+"settings.after.copy_only" = "仅显示提示";
+"settings.after.pin" = "钉选到屏幕";
+"prefs.auto_copy" = "自动复制到剪贴板";
+"prefs.auto_save" = "自动保存到文件夹";
+"prefs.play_sound" = "播放快门音效";
+"prefs.show_cursor_shot" = "全屏截图包含鼠标指针";
+"prefs.files" = "文件";
+"prefs.image_format" = "图片格式";
+"prefs.jpeg_quality" = "JPEG 质量";
+"prefs.save_location" = "保存位置";
+"prefs.choose" = "选择…";
+"prefs.filename_template" = "文件名模板";
+"prefs.filename_hint" = "可用代码：{date} {time} {seq}，例如“SnapMark {date} at {time}”";
+"prefs.video_format" = "视频格式";
+"prefs.video_codec" = "编码器";
+"prefs.frame_rate" = "帧率";
+"prefs.countdown" = "录制前倒计时";
+"prefs.countdown_off" = "关闭";
+"prefs.audio" = "音频";
+"prefs.system_audio" = "录制系统声音";
+"prefs.microphone" = "录制麦克风";
+"prefs.mic_requires_15" = "麦克风录音需要 macOS 15 或更高版本。";
+"prefs.show_cursor_rec" = "录制时显示鼠标指针";
+"prefs.hotkey_hint" = "点击快捷键，再按下新的按键组合（至少需要一个修饰键），Esc 可取消。";
+"prefs.hotkey_none" = "未设置";
+"prefs.press_keys" = "请按下按键…";
+"prefs.hotkey_disable" = "停用此快捷键";
+"prefs.reset_hotkeys" = "重置为默认值";
+
+/* 关于 */
+"about.tagline" = "为你的 Mac 打造精致的截图、录屏与标注体验";
+"about.f1" = "区域、窗口、全屏截图，内置像素放大镜取色";
+"about.f2" = "全屏／区域录屏，支持系统声音、麦克风与 GIF 导出";
+"about.f3" = "完整标注工具：画笔、箭头、形状、文字、马赛克、步骤序号";
+"about.f4" = "内置 OCR 文字识别，支持简中、繁中、英文";
+"about.f5" = "钉选截图为浮动窗口，随时参考对比";
+
+/* 1.1 新增 */
+"editor.untitled" = "新截图";
+"editor.save_help" = "保存到截图文件夹";
+"editor.more" = "更多…";
+"editor.reveal" = "在访达中显示";
+"editor.cancel" = "取消";
+"editor.dont_save" = "不保存";
+"editor.unsaved_title" = "要保存这张截图的更改吗？";
+"editor.unsaved_body" = "如果不保存就关闭，你的标注将会丢失。";
+"editor.status_copied" = "已复制到剪贴板";
+"editor.status_saved" = "已保存 %@";
+
+"overlay.copy" = "复制";
+"overlay.hint_record" = "拖拽选取录制范围 · 点击窗口自动吸附 · Esc 取消";
+"overlay.hint_selected" = "↩ 确认 · ⌘C 仅复制 · 拖拽边角调整 · 方向键微调 · Esc 取消";
+
+"hud.countdown_cancel" = "取消（或再按一次快捷键）";
+"toast.record_cancelled" = "已取消录制";
+"toast.captured_copied" = "已截图并复制";
+"toast.ready" = "SnapMark 已在菜单栏就绪";
+"toast.ready_hint" = "%@ 区域截图";
+
+"menu.file" = "文件";
+"menu.view" = "显示";
+"menu.window" = "窗口";
+"menu.help" = "帮助";
+"menu.about" = "关于 SnapMark";
+"menu.quick_start" = "快速上手与权限…";
+"menu.hide" = "隐藏 SnapMark";
+"menu.open_image" = "在编辑器中打开图片…";
+"menu.save" = "保存";
+"menu.save_as" = "另存为…";
+"menu.reveal" = "在访达中显示";
+"menu.close" = "关闭窗口";
+"menu.undo" = "撤销";
+"menu.redo" = "重做";
+"menu.cut" = "剪切";
+"menu.copy" = "复制图片";
+"menu.paste" = "粘贴";
+"menu.delete" = "删除标注";
+"menu.select_all" = "全选";
+"menu.zoom_in" = "放大";
+"menu.zoom_out" = "缩小";
+"menu.zoom_actual" = "实际大小";
+"menu.zoom_fit" = "适应窗口";
+"menu.minimize" = "最小化";
+"menu.zoom_window" = "缩放";
+"menu.bring_all_front" = "前置全部窗口";
+"menu.no_recent" = "暂无截图";
+
+"perm.status_granted" = "已授予“屏幕录制”权限";
+"perm.status_missing" = "尚未授予“屏幕录制”权限";
+"perm.granted_body" = "截图与录屏功能已可使用。";
+"perm.missing_body" = "macOS 需要此权限才能截取屏幕。请在“系统设置 → 隐私与安全性 → 屏幕录制”中启用 SnapMark，然后重新启动 SnapMark。";
+"perm.regrant_note" = "系统设置里已经开启却仍显示未授予？那是 macOS 记住了旧版本的签名，那个开关绑定的是旧版本。点“重置权限记录”让 macOS 重新询问，再开启一次 SnapMark，然后重新启动。";
+"perm.relaunch" = "重新启动 SnapMark";
+
+"prefs.hotkey_conflict" = "已被其他应用或 macOS 占用，请换一组按键";
+"prefs.hotkey_record_help" = "点击后按下新的快捷键";
+"prefs.record_tip" = "小提示：再按一次录制快捷键即可停止。SnapMark 自己的窗口永远不会出现在录屏中。";
+
+"welcome.subtitle" = "截图、录屏与标注，安静地待在你的菜单栏。";
+"welcome.hotkeys_title" = "快捷键";
+"welcome.hotkeys_hint" = "可在偏好设置中自定义";
+"welcome.prefs" = "偏好设置…";
+"welcome.start" = "开始使用";
+"overlay.hint_selected_record" = "↩ 开始录制 · 拖拽边角调整 · 方向键微调 · Esc 取消";
+"perm.reset_record" = "重置权限记录";
+"perm.reset_record_help" = "清除过期的记录，让 macOS 重新登记这个版本并再次询问";
+"toast.perm_reset" = "权限记录已重置，请到系统设置开启 SnapMark，再重新启动";

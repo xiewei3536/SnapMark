@@ -1,0 +1,240 @@
+/* SnapMark — English */
+
+"lang.system" = "Follow System";
+
+/* Actions / hotkeys */
+"action.capture_region" = "Capture Area";
+"action.capture_fullscreen" = "Capture Full Screen";
+"action.capture_window" = "Capture Window";
+"action.record_region" = "Record Area";
+"action.record_fullscreen" = "Record Full Screen";
+"action.ocr_region" = "Extract Text (OCR)";
+"action.pin_region" = "Pin Area to Screen";
+"action.repeat_last" = "Repeat Last Area";
+
+/* Menu */
+"menu.stop_recording" = "Stop Recording";
+"menu.discard_recording" = "Discard Recording";
+"menu.recent" = "Recent Captures";
+"menu.open_folder" = "Open Save Folder";
+"menu.preferences" = "Preferences…";
+"menu.grant_permission" = "Grant Screen Recording Permission…";
+"menu.quit" = "Quit SnapMark";
+"menu.edit" = "Edit";
+
+/* Selection overlay */
+"overlay.hint" = "Drag to select an area · Click a window to snap · Esc to cancel";
+"overlay.hint_window" = "Click a window to capture it · Esc to cancel";
+"overlay.capture" = "Capture";
+"overlay.record" = "Record";
+"overlay.pin" = "Pin";
+"overlay.ocr" = "OCR";
+"overlay.cancel_help" = "Cancel (Esc)";
+
+/* Recording HUD */
+"hud.fullscreen" = "Full Screen";
+"hud.stop" = "Stop";
+"hud.stop_help" = "Stop and save the recording";
+"hud.discard_help" = "Discard the recording";
+
+/* Recording done panel */
+"done.recording_saved" = "Recording saved";
+"done.open" = "Open";
+"done.reveal" = "Show in Finder";
+"done.copy" = "Copy";
+"done.exporting_gif" = "Exporting GIF…";
+
+/* Editor */
+"tool.select" = "Select / Move";
+"tool.pen" = "Pen";
+"tool.highlighter" = "Highlighter";
+"tool.line" = "Line";
+"tool.arrow" = "Arrow";
+"tool.rect" = "Rectangle";
+"tool.ellipse" = "Ellipse";
+"tool.text" = "Text";
+"tool.mosaic" = "Mosaic / Blur";
+"tool.badge" = "Step Badge";
+"tool.crop" = "Crop";
+
+"editor.color" = "Color";
+"editor.custom_color" = "Custom color";
+"editor.size" = "Stroke / text size";
+"editor.stroke_width" = "Stroke width";
+"editor.font_size" = "Font size";
+"editor.pixelate" = "Pixelate";
+"editor.blur" = "Blur";
+"editor.apply_crop" = "Apply Crop";
+"editor.cancel_crop" = "Cancel";
+"editor.undo" = "Undo (⌘Z)";
+"editor.redo" = "Redo (⇧⌘Z)";
+"editor.ocr" = "OCR";
+"editor.ocr_help" = "Recognize text in the image and copy it";
+"editor.ocr_result" = "Recognized Text (copied)";
+"editor.pin" = "Pin";
+"editor.pin_help" = "Float this image above all windows";
+"editor.copy" = "Copy";
+"editor.copy_help" = "Copy to clipboard";
+"editor.save" = "Save";
+"editor.save_as" = "Save As…";
+"editor.text_placeholder" = "Type text…";
+"editor.zoom_in" = "Zoom in (⌘+)";
+"editor.zoom_out" = "Zoom out (⌘−)";
+"editor.fit" = "Fit";
+
+"hint.select" = "Click to select · drag to move · double-click text to edit · ⌫ to delete";
+"hint.draw" = "Drag to draw";
+"hint.shape" = "Drag to draw · hold ⇧ for square / 45°";
+"hint.text" = "Click anywhere to add text";
+"hint.badge" = "Click to place numbered steps ①②③";
+"hint.crop" = "Drag to choose the crop area, then Apply";
+
+/* Pin */
+"pin.edit" = "Annotate";
+"pin.copy" = "Copy";
+"pin.save" = "Save";
+"pin.opacity" = "Opacity";
+"pin.close" = "Close";
+"pin.hint" = "Scroll to zoom · double-click to close";
+
+/* Toasts */
+"toast.captured" = "Captured";
+"toast.copied" = "Copied to clipboard";
+"toast.file_copied" = "File copied to clipboard";
+"toast.saved" = "Saved";
+"toast.save_failed" = "Could not save the file";
+"toast.capture_failed" = "Capture failed";
+"toast.record_failed" = "Could not start recording";
+"toast.open_failed" = "Could not open the file";
+"toast.ocr_copied" = "Text recognized & copied";
+"toast.ocr_empty" = "No text found";
+"toast.gif_saved" = "GIF exported";
+"toast.gif_failed" = "GIF export failed";
+
+/* Permission */
+"perm.title" = "Screen Recording permission needed";
+"perm.open_settings" = "Open System Settings";
+
+/* Errors */
+"error.no_permission" = "Screen Recording permission was not granted.";
+"error.display_not_found" = "Display not found.";
+"error.capture_failed" = "Capture failed.";
+
+/* Preferences */
+"prefs.title" = "SnapMark Preferences";
+"prefs.general" = "General";
+"prefs.recording" = "Recording";
+"prefs.hotkeys" = "Shortcuts";
+"prefs.about" = "About";
+"prefs.language" = "Language";
+"prefs.launch_at_login" = "Launch at login";
+"prefs.after_capture" = "After capture";
+"prefs.after_capture_action" = "Then";
+"settings.after.editor" = "Open the editor";
+"settings.after.copy_only" = "Just notify";
+"settings.after.pin" = "Pin to screen";
+"prefs.auto_copy" = "Copy to clipboard automatically";
+"prefs.auto_save" = "Save to folder automatically";
+"prefs.play_sound" = "Play shutter sound";
+"prefs.show_cursor_shot" = "Include mouse cursor in full-screen shots";
+"prefs.files" = "Files";
+"prefs.image_format" = "Image format";
+"prefs.jpeg_quality" = "JPEG quality";
+"prefs.save_location" = "Save location";
+"prefs.choose" = "Choose…";
+"prefs.filename_template" = "File name template";
+"prefs.filename_hint" = "Tokens: {date} {time} {seq} — e.g. “SnapMark {date} at {time}”";
+"prefs.video_format" = "Video format";
+"prefs.video_codec" = "Codec";
+"prefs.frame_rate" = "Frame rate";
+"prefs.countdown" = "Countdown before recording";
+"prefs.countdown_off" = "Off";
+"prefs.audio" = "Audio";
+"prefs.system_audio" = "Record system audio";
+"prefs.microphone" = "Record microphone";
+"prefs.mic_requires_15" = "Microphone recording requires macOS 15 or later.";
+"prefs.show_cursor_rec" = "Show mouse cursor in recordings";
+"prefs.hotkey_hint" = "Click a shortcut, then press the new key combination (needs at least one modifier). Esc cancels.";
+"prefs.hotkey_none" = "None";
+"prefs.press_keys" = "Press keys…";
+"prefs.hotkey_disable" = "Disable this shortcut";
+"prefs.reset_hotkeys" = "Reset to Defaults";
+
+/* About */
+"about.tagline" = "Beautiful screenshots, recordings & annotations for your Mac";
+"about.f1" = "Area, window and full-screen capture with a magnifier loupe";
+"about.f2" = "Screen & area recording with system audio, mic and GIF export";
+"about.f3" = "Full annotation suite: pen, arrows, shapes, text, mosaic, step badges";
+"about.f4" = "Built-in OCR for English, Simplified and Traditional Chinese";
+"about.f5" = "Pin captures as floating reference windows";
+
+/* Added in 1.1 */
+"editor.untitled" = "New Capture";
+"editor.save_help" = "Save to your capture folder";
+"editor.more" = "More…";
+"editor.reveal" = "Show in Finder";
+"editor.cancel" = "Cancel";
+"editor.dont_save" = "Don't Save";
+"editor.unsaved_title" = "Save changes to this capture?";
+"editor.unsaved_body" = "Your annotations will be lost if you close without saving.";
+"editor.status_copied" = "Copied to clipboard";
+"editor.status_saved" = "Saved %@";
+
+"overlay.copy" = "Copy";
+"overlay.hint_record" = "Drag to choose the recording area · Click a window to snap to it · Esc to cancel";
+"overlay.hint_selected" = "↩ Confirm · ⌘C Copy only · Drag edges to adjust · Arrow keys nudge · Esc Cancel";
+
+"hud.countdown_cancel" = "Cancel (or press the shortcut again)";
+"toast.record_cancelled" = "Recording cancelled";
+"toast.captured_copied" = "Captured & copied";
+"toast.ready" = "SnapMark is ready in the menu bar";
+"toast.ready_hint" = "%@ to capture an area";
+
+"menu.file" = "File";
+"menu.view" = "View";
+"menu.window" = "Window";
+"menu.help" = "Help";
+"menu.about" = "About SnapMark";
+"menu.quick_start" = "Quick Start & Permissions…";
+"menu.hide" = "Hide SnapMark";
+"menu.open_image" = "Open Image in Editor…";
+"menu.save" = "Save";
+"menu.save_as" = "Save As…";
+"menu.reveal" = "Show in Finder";
+"menu.close" = "Close Window";
+"menu.undo" = "Undo";
+"menu.redo" = "Redo";
+"menu.cut" = "Cut";
+"menu.copy" = "Copy Image";
+"menu.paste" = "Paste";
+"menu.delete" = "Delete Annotation";
+"menu.select_all" = "Select All";
+"menu.zoom_in" = "Zoom In";
+"menu.zoom_out" = "Zoom Out";
+"menu.zoom_actual" = "Actual Size";
+"menu.zoom_fit" = "Zoom to Fit";
+"menu.minimize" = "Minimize";
+"menu.zoom_window" = "Zoom";
+"menu.bring_all_front" = "Bring All to Front";
+"menu.no_recent" = "No captures yet";
+
+"perm.status_granted" = "Screen Recording permission granted";
+"perm.status_missing" = "Screen Recording permission missing";
+"perm.granted_body" = "Screenshots and recordings are ready to go.";
+"perm.missing_body" = "macOS requires this permission to capture the screen. Enable SnapMark under System Settings → Privacy & Security → Screen Recording, then relaunch SnapMark.";
+"perm.regrant_note" = "Already ON in System Settings but still shown as missing? macOS remembered the signature of an older build and that switch belongs to it. Click “Reset Permission Record”: macOS asks again, switch SnapMark on once more, then relaunch.";
+"perm.relaunch" = "Relaunch SnapMark";
+
+"prefs.hotkey_conflict" = "Taken by another app or macOS — choose a different combination";
+"prefs.hotkey_record_help" = "Click, then press the new shortcut";
+"prefs.record_tip" = "Tip: press the recording shortcut again to stop. SnapMark's own windows never appear in recordings.";
+
+"welcome.subtitle" = "Screenshots, screen recordings and annotations — living quietly in your menu bar.";
+"welcome.hotkeys_title" = "Shortcuts";
+"welcome.hotkeys_hint" = "Customizable in Preferences";
+"welcome.prefs" = "Preferences…";
+"welcome.start" = "Get Started";
+"overlay.hint_selected_record" = "↩ Start recording · Drag edges to adjust · Arrow keys nudge · Esc Cancel";
+"perm.reset_record" = "Reset Permission Record";
+"perm.reset_record_help" = "Clears the stale record so macOS registers this build and asks again";
+"toast.perm_reset" = "Permission record reset — enable SnapMark in System Settings, then relaunch";
