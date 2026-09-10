@@ -349,7 +349,7 @@ struct AboutPrefs: View {
             Text(L("about.tagline"))
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
-            Text("Version 1.1.1 · Universal (Apple Silicon + Intel) · macOS 13+")
+            Text("Version 1.2.0 · Universal (Apple Silicon + Intel) · macOS 13+")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
 

@@ -82,10 +82,10 @@
 "editor.zoom_out" = "Zoom out (⌘−)";
 "editor.fit" = "Fit";
 
-"hint.select" = "Click to select · drag to move · double-click text to edit · ⌫ to delete";
+"hint.select" = "Click to select · drag to move · corners resize · double-click text to edit · toolbar restyles the selection · ⌫ delete";
 "hint.draw" = "Drag to draw";
 "hint.shape" = "Drag to draw · hold ⇧ for square / 45°";
-"hint.text" = "Click anywhere to add text";
+"hint.text" = "Click to add text · ⇧↩ new line · drag ⠿ to move · drag the corner to resize · ↩ / Esc done";
 "hint.badge" = "Click to place numbered steps ①②③";
 "hint.crop" = "Drag to choose the crop area, then Apply";
 
@@ -238,3 +238,24 @@
 "perm.reset_record" = "Reset Permission Record";
 "perm.reset_record_help" = "Clears the stale record so macOS registers this build and asks again";
 "toast.perm_reset" = "Permission record reset — enable SnapMark in System Settings, then relaunch";
+"text.font" = "Font";
+"text.system_font" = "System Font";
+"text.search_font" = "Search fonts…";
+"text.common_fonts" = "Common";
+"text.all_fonts" = "All fonts";
+"text.size" = "Size";
+"text.bold" = "Bold  ⌘B";
+"text.italic" = "Italic  ⌘I";
+"text.underline" = "Underline  ⌘U";
+"text.strike" = "Strikethrough";
+"text.align_left" = "Align left";
+"text.align_center" = "Center";
+"text.align_right" = "Align right";
+"text.plate" = "Plate";
+"text.outline" = "Outline";
+"text.shadow" = "Shadow";
+"text.plate_help" = "Contrasting backdrop behind the text";
+"text.outline_help" = "Contrasting stroke around the letters";
+"text.shadow_help" = "Soft drop shadow";
+"text.grip_help" = "Drag to move";
+"text.scale_help" = "Drag to resize";

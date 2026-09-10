@@ -2,7 +2,7 @@
 
 精緻的 macOS 截圖／錄影／標註工具。原生 Swift + SwiftUI，Universal Binary 同時支援 **Apple Silicon（M 系列）與 Intel**，介面支援**繁體中文、简体中文、English** 即時切換（免重啟）。
 
-![platform](https://img.shields.io/badge/macOS-13.0%2B-blue) ![arch](https://img.shields.io/badge/arch-arm64%20%2B%20x86__64-purple) ![version](https://img.shields.io/badge/version-1.1.0-green)
+![platform](https://img.shields.io/badge/macOS-13.0%2B-blue) ![arch](https://img.shields.io/badge/arch-arm64%20%2B%20x86__64-purple) ![version](https://img.shields.io/badge/version-1.2.0-green)
 
 ## 功能
 
@@ -12,7 +12,8 @@
 | **選取體驗** | 像素放大鏡＋取色器（座標／HEX）、尺寸即時顯示、8 向調整手把、方向鍵微調（⇧×10）、三分構圖線、**⌘C 只複製不開編輯器** |
 | **錄影** | 全螢幕／區域錄影（H.264 / HEVC，MP4 / MOV）、系統聲音、麥克風（macOS 15+）、可調影格率、可取消的錄前倒數、紅框指示、浮動控制列、**再按一次快捷鍵即停止**；錄影開始時自動把焦點還給原本的 App |
 | **GIF** | 錄影完成後一鍵轉存 GIF |
-| **編輯器** | 畫筆、螢光筆、直線、箭頭、矩形、橢圓、文字（中英）、馬賽克／模糊、步驟標號 ①②③（刪除自動重新編號）、裁切、無限復原重做、縮放（⌘滾輪／捏合）、精準命中選取、原生標題列＋未儲存圓點、關閉前詢問是否儲存 |
+| **編輯器** | 畫筆、螢光筆、直線、箭頭、矩形、橢圓、馬賽克／模糊、步驟標號 ①②③（刪除自動重新編號）、裁切、無限復原重做、縮放（⌘滾輪／捏合）、精準命中選取、原生標題列＋未儲存圓點、關閉前詢問是否儲存；**工具列的顏色／線寬／字級會直接套用在選取中的物件** |
+| **文字排版** | 原生文字編輯（IME 友善）、⇧↩ 多行、拖曳 ⠿ 移動、拖曳角落縮放字級、字體選單（常用中英字體＋全部字體、各自預覽）、粗體／斜體（無斜體字型自動合成）／底線／刪除線、左中右對齊、對比色底板、外描邊、陰影；⌘B／⌘I／⌘U、⌥⌘↑↓ 調字級 |
 | **OCR 取字** | Vision 文字辨識（繁中／簡中／英文），一鍵複製；快捷鍵「框選→辨識→進剪貼簿」 |
 | **釘選貼圖** | 把截圖釘在所有視窗最上層：拖曳移動、滾輪縮放、懸浮工具列、右鍵選單調不透明度、雙擊關閉 |
 | **流程自動化** | 截圖後自動複製到剪貼簿 ✓、自動存檔 ✓（PNG 含 Retina DPI）、可選「開編輯器／僅提示／直接釘選」、快門音效、檔名模板 `{date} {time} {seq}` |
@@ -33,7 +34,7 @@
 
 選取時：**點擊視窗**立即擷取整個視窗、**Enter** 確認、**⌘C** 只複製、**Esc** 取消、**方向鍵** 微調。
 
-編輯器內（依實體鍵位，中文輸入法下也有效）：**V/P/H/L/A/R/E/T/M/B/C** 切換工具、**⌘Z / ⇧⌘Z** 復原重做、**⌘C** 複製、**⌘S** 儲存、**⇧⌘S** 另存、**⌘+ / ⌘− / ⌘0 / ⌘9** 縮放、**⌫** 刪除、**⇧拖曳** 正方形／45°、**雙擊文字** 編輯、**Enter** 套用裁切。
+編輯器內（依實體鍵位，中文輸入法下也有效）：**V/P/H/L/A/R/E/T/M/B/C** 切換工具、**⌘Z / ⇧⌘Z** 復原重做、**⌘C** 複製、**⌘S** 儲存、**⇧⌘S** 另存、**⌘+ / ⌘− / ⌘0 / ⌘9** 縮放、**⌫** 刪除、**⇧拖曳** 正方形／45°、**雙擊文字** 編輯、**Enter** 套用裁切。文字：**⇧↩** 換行、**⌘B / ⌘I / ⌘U** 粗斜底線、**⌥⌘↑ / ⌥⌘↓** 字級。
 
 ## 安裝與權限
 
@@ -81,13 +82,14 @@ Sources/SnapMark/
 ├── RecordingHUD.swift              # 倒數、紅框、控制列、完成面板
 ├── GIFExporter.swift               # 影片轉 GIF
 ├── EditorState/View/Window.swift   # 標註編輯器
-├── AnnotationModel.swift           # 標註模型、渲染器、命中測試
+├── AnnotationModel.swift           # 標註模型、文字樣式、渲染器、命中測試
 ├── PinWindow.swift                 # 釘選浮動貼圖（AppKit）
 ├── OCRService.swift / ToastWindow / HistoryManager / HotkeyManager
 ├── PreferencesWindow.swift         # 偏好設定（含快捷鍵錄製器）
 ├── L10n.swift + Resources/*.lproj  # 三語系
 └── Settings.swift                  # 使用者偏好
 Packaging/                          # Info.plist、圖示產生器、自簽憑證腳本
+Tools/                              # UI 自動測試工具（合成事件、視窗列表、輸入法切換）
 ```
 
 MIT-style — 自由使用與修改。

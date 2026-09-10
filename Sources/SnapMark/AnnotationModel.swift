@@ -68,6 +68,57 @@ enum Tool: String, CaseIterable, Identifiable {
     }
 }
 
+enum TextAlign: String, CaseIterable, Equatable {
+    case left, center, right
+    var ns: NSTextAlignment {
+        switch self {
+        case .left: return .left
+        case .center: return .center
+        case .right: return .right
+        }
+    }
+}
+
+/// Typography for text annotations. `fontFamily == nil` means the system font.
+struct TextStyle: Equatable {
+    var fontFamily: String? = nil
+    var bold: Bool = true
+    var italic: Bool = false
+    var underline: Bool = false
+    var strikethrough: Bool = false
+    var alignment: TextAlign = .left
+    var plate: Bool = false    // contrasting rounded backdrop behind the text
+    var outline: Bool = false  // contrasting stroke around the glyphs
+    var shadow: Bool = true
+
+    /// Resolves the NSFont for a pixel size. Returns `syntheticItalic == true` when italics were
+    /// requested but the family has no italic face; callers then apply `.obliqueness` — never a
+    /// font matrix (`NSFont(descriptor:textTransform:)` silently drops the point size).
+    func resolvedFont(size: CGFloat) -> (font: NSFont, syntheticItalic: Bool) {
+        let fm = NSFontManager.shared
+        var font: NSFont
+        if let family = fontFamily {
+            var traits: NSFontTraitMask = []
+            if bold { traits.insert(.boldFontMask) }
+            if italic { traits.insert(.italicFontMask) }
+            font = fm.font(withFamily: family, traits: traits, weight: bold ? 9 : 5, size: size)
+                ?? fm.font(withFamily: family, traits: bold ? [.boldFontMask] : [], weight: bold ? 9 : 5, size: size)
+                ?? fm.font(withFamily: family, traits: [], weight: 5, size: size)
+                ?? NSFont.systemFont(ofSize: size, weight: bold ? .semibold : .regular)
+        } else {
+            font = NSFont.systemFont(ofSize: size, weight: bold ? .semibold : .regular)
+            if italic {
+                let converted = fm.convert(font, toHaveTrait: .italicFontMask)
+                if converted.fontDescriptor.symbolicTraits.contains(.italic) { font = converted }
+            }
+        }
+        let hasItalic = font.fontDescriptor.symbolicTraits.contains(.italic)
+        return (font, italic && !hasItalic)
+    }
+
+    func font(size: CGFloat) -> NSFont { resolvedFont(size: size).font }
+}
+
 /// One drawn element. All coordinates are in image PIXEL space, top-left origin.
 struct Annotation: Identifiable, Equatable {
     enum Kind: Equatable { case pen, highlighter, line, arrow, rect, ellipse, text, mosaic, badge }
@@ -81,6 +132,7 @@ struct Annotation: Identifiable, Equatable {
     var end: CGPoint = .zero
     var text: String = ""
     var fontSize: CGFloat = 44
+    var textStyle = TextStyle()
     var badgeNumber: Int = 1
     var mosaicBlur: Bool = false
 
@@ -88,14 +140,81 @@ struct Annotation: Identifiable, Equatable {
 
     var badgeRadius: CGFloat { 14 + lineWidth * 1.6 }
 
-    func measuredTextSize() -> CGSize {
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
-        let str = NSAttributedString(string: text.isEmpty ? " " : text, attributes: [.font: font])
-        var size = str.size()
-        size.width += 8
-        size.height += 6
-        return size
+    // MARK: Text
+
+    /// Inner padding between the glyphs and the text box (also the plate's corner radius).
+    var textPadding: CGFloat { max(4, fontSize * 0.18) }
+
+    var isLightColor: Bool { color.r * 0.299 + color.g * 0.587 + color.b * 0.114 > 0.6 }
+
+    /// A color that reads against the text color (for plates and outlines).
+    var textContrastColor: NSColor {
+        isLightColor ? NSColor.black.withAlphaComponent(0.88) : NSColor.white.withAlphaComponent(0.96)
     }
+
+    /// Plate color: the opposite of the text color.
+    var plateColor: NSColor {
+        isLightColor ? NSColor.black.withAlphaComponent(0.62) : NSColor.white.withAlphaComponent(0.86)
+    }
+
+    /// Outline color: contrasts with whatever sits directly behind the glyphs.
+    var outlineColor: NSColor {
+        if textStyle.plate {
+            // On a white plate use a dark outline, on a dark plate a light one.
+            return isLightColor ? NSColor.white.withAlphaComponent(0.9) : NSColor.black.withAlphaComponent(0.75)
+        }
+        return textContrastColor
+    }
+
+    /// The fully styled text (fill pass), in pixel units.
+    func attributedText() -> NSAttributedString {
+        NSAttributedString(string: text.isEmpty ? " " : text, attributes: textAttributes(strokeOnly: false))
+    }
+
+    /// Stroke-only pass drawn underneath the fill so the outline sits outside the glyphs.
+    func outlineAttributedText() -> NSAttributedString {
+        NSAttributedString(string: text.isEmpty ? " " : text, attributes: textAttributes(strokeOnly: true))
+    }
+
+    private func textAttributes(strokeOnly: Bool) -> [NSAttributedString.Key: Any] {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = textStyle.alignment.ns
+        let resolved = textStyle.resolvedFont(size: fontSize)
+        var attrs: [NSAttributedString.Key: Any] = [
+            .font: resolved.font,
+            .foregroundColor: color.nsColor,
+            .paragraphStyle: paragraph,
+        ]
+        if resolved.syntheticItalic { attrs[.obliqueness] = 0.22 }
+        if textStyle.underline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+        if textStyle.strikethrough { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+        if strokeOnly {
+            attrs[.strokeColor] = outlineColor
+            attrs[.strokeWidth] = 7.0 // positive = stroke only; % of font size, half lands outside the glyph
+            attrs[.foregroundColor] = outlineColor
+            attrs[.underlineColor] = NSColor.clear
+            attrs[.strikethroughColor] = NSColor.clear
+            return attrs
+        }
+        if textStyle.shadow && !textStyle.plate {
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor.black.withAlphaComponent(0.45)
+            shadow.shadowBlurRadius = fontSize * 0.08
+            shadow.shadowOffset = NSSize(width: 0, height: -fontSize * 0.04)
+            attrs[.shadow] = shadow
+        }
+        return attrs
+    }
+
+    /// Size of the text box (glyphs + padding), in pixels. Multi-line aware.
+    func measuredTextSize() -> CGSize {
+        let rect = attributedText().boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading])
+        return CGSize(width: ceil(rect.width) + textPadding * 2, height: ceil(rect.height) + textPadding * 2)
+    }
+
+    var textBox: CGRect { CGRect(origin: start, size: measuredTextSize()) }
 
     /// Bounding box in pixel space (for hit-testing / selection chrome).
     var bounds: CGRect {
@@ -258,18 +377,18 @@ enum AnnotationRenderer {
         NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
         defer { NSGraphicsContext.current = previous }
 
-        let font = NSFont.systemFont(ofSize: a.fontSize, weight: .semibold)
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.45)
-        shadow.shadowBlurRadius = a.fontSize * 0.08
-        shadow.shadowOffset = NSSize(width: 0, height: -a.fontSize * 0.04)
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: a.color.nsColor,
-            .shadow: shadow,
-        ]
-        NSAttributedString(string: a.text, attributes: attrs)
-            .draw(at: CGPoint(x: a.start.x + 4, y: a.start.y + 3))
+        let box = a.textBox
+        if a.textStyle.plate {
+            let plate = NSBezierPath(roundedRect: box, xRadius: a.textPadding, yRadius: a.textPadding)
+            a.plateColor.setFill()
+            plate.fill()
+        }
+        let textRect = box.insetBy(dx: a.textPadding, dy: a.textPadding)
+        let options: NSString.DrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
+        if a.textStyle.outline {
+            a.outlineAttributedText().draw(with: textRect, options: options)
+        }
+        a.attributedText().draw(with: textRect, options: options)
     }
 
     private static func drawMosaic(_ a: Annotation, in ctx: CGContext, imageSize: CGSize,

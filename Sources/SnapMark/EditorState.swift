@@ -16,8 +16,8 @@ final class EditorState: ObservableObject {
 
     @Published var annotations: [Annotation] = []
     @Published var draft: Annotation?
-    @Published var selectedID: UUID?
-    @Published var editingTextID: UUID?
+    @Published var selectedID: UUID? { didSet { if selectedID != oldValue { syncInspectorFromSelection() } } }
+    @Published var editingTextID: UUID? { didSet { if editingTextID != oldValue { syncInspectorFromSelection() } } }
     @Published var tool: Tool = .arrow {
         didSet {
             if tool != .select { selectedID = nil }
@@ -25,9 +25,21 @@ final class EditorState: ObservableObject {
             commitTextEditing()
         }
     }
-    @Published var color: RGBA = RGBA.presets[0]
-    @Published var lineWidthPt: CGFloat = 4
-    @Published var fontSizePt: CGFloat = 22
+
+    // Inspector values. They describe the *next* annotation, and — when something is selected
+    // or a text is being edited — they also apply live to that annotation.
+    @Published var color: RGBA = RGBA.presets[0] {
+        didSet { if color != oldValue { applyToInspected { $0.color = color } } }
+    }
+    @Published var lineWidthPt: CGFloat = 4 {
+        didSet { if lineWidthPt != oldValue { applyToInspected(excluding: [.text]) { $0.lineWidth = lineWidthPx } } }
+    }
+    @Published var fontSizePt: CGFloat = 22 {
+        didSet { if fontSizePt != oldValue { applyToInspected(only: [.text]) { $0.fontSize = fontSizePx } } }
+    }
+    @Published var textStyle = TextStyle() {
+        didSet { if textStyle != oldValue { applyToInspected(only: [.text]) { $0.textStyle = textStyle } } }
+    }
     @Published var mosaicBlur = false
     @Published var zoom: CGFloat = 1
     @Published var cropRect: CGRect?
@@ -55,6 +67,7 @@ final class EditorState: ObservableObject {
         case drawing
         case movingAnnotation(id: UUID, last: CGPoint)
         case resizingAnnotation(id: UUID, handle: ShapeHandle, anchor: CGPoint)
+        case scalingText(id: UUID, handle: ShapeHandle)
         case croppingNew(start: CGPoint)
     }
     private var gestureMode: GestureMode = .none
@@ -110,6 +123,105 @@ final class EditorState: ObservableObject {
         savedBase = base
     }
 
+    // MARK: Inspector ↔ selection
+
+    /// The annotation the inspector controls: the text being edited, else the selection.
+    var inspectedID: UUID? { editingTextID ?? selectedID }
+    var inspected: Annotation? { inspectedID.flatMap { id in annotations.first { $0.id == id } } }
+    var inspectedIsText: Bool { inspected?.kind == .text }
+
+    private var syncingInspector = false
+    private var lastInspectorUndo = Date.distantPast
+
+    private func applyToInspected(only: Set<Annotation.Kind>? = nil, excluding: Set<Annotation.Kind> = [],
+                                  _ mutate: (inout Annotation) -> Void) {
+        guard !syncingInspector, let id = inspectedID,
+              let idx = annotations.firstIndex(where: { $0.id == id }) else { return }
+        let kind = annotations[idx].kind
+        if let only, !only.contains(kind) { return }
+        if excluding.contains(kind) { return }
+        // Slider drags produce many changes; one undo step per burst.
+        if Date().timeIntervalSince(lastInspectorUndo) > 1.2 { pushUndo() }
+        lastInspectorUndo = Date()
+        mutate(&annotations[idx])
+    }
+
+    /// Mirrors the selected/edited annotation's attributes into the inspector controls.
+    private func syncInspectorFromSelection() {
+        guard let a = inspected else { return }
+        syncingInspector = true
+        color = a.color
+        switch a.kind {
+        case .text:
+            fontSizePt = a.fontSize / scale
+            textStyle = a.textStyle
+        default:
+            lineWidthPt = a.lineWidth / scale
+        }
+        syncingInspector = false
+    }
+
+    // MARK: Text editing operations
+
+    func adjustFontSize(by delta: CGFloat) {
+        fontSizePt = min(200, max(6, fontSizePt + delta))
+    }
+
+    func updateText(id: UUID, _ text: String) {
+        guard let idx = annotations.firstIndex(where: { $0.id == id }), annotations[idx].text != text else { return }
+        annotations[idx].text = text
+    }
+
+    /// Moves a text annotation by a pixel delta (used by the grip while editing).
+    func moveText(id: UUID, by delta: CGPoint, begin: Bool) {
+        guard let idx = annotations.firstIndex(where: { $0.id == id }) else { return }
+        if begin { pushUndo() }
+        annotations[idx].translate(by: delta)
+        let box = annotations[idx].textBox
+        annotations[idx].start.x = min(max(-box.width + 20, annotations[idx].start.x), pixelSize.width - 20)
+        annotations[idx].start.y = min(max(-box.height + 20, annotations[idx].start.y), pixelSize.height - 20)
+    }
+
+    /// Scales a text annotation by dragging one of its corners; the opposite corner stays put.
+    func scaleText(id: UUID, handle: ShapeHandle, to p: CGPoint, begin: Bool) {
+        guard let idx = annotations.firstIndex(where: { $0.id == id }) else { return }
+        if begin {
+            pushUndo()
+            let box = annotations[idx].textBox
+            textScaleAnchor = Self.oppositeCorner(of: handle, in: box)
+            textScaleStartSize = annotations[idx].fontSize
+            textScaleStartDistance = max(1, hypot(p.x - textScaleAnchor.x, p.y - textScaleAnchor.y))
+        }
+        let factor = hypot(p.x - textScaleAnchor.x, p.y - textScaleAnchor.y) / textScaleStartDistance
+        let newSize = min(400 * scale, max(6 * scale, textScaleStartSize * factor))
+        annotations[idx].fontSize = newSize
+        let box = annotations[idx].measuredTextSize()
+        switch handle {
+        case .cornerBR, .end: annotations[idx].start = textScaleAnchor
+        case .cornerTL, .start: annotations[idx].start = CGPoint(x: textScaleAnchor.x - box.width, y: textScaleAnchor.y - box.height)
+        case .cornerTR: annotations[idx].start = CGPoint(x: textScaleAnchor.x, y: textScaleAnchor.y - box.height)
+        case .cornerBL: annotations[idx].start = CGPoint(x: textScaleAnchor.x - box.width, y: textScaleAnchor.y)
+        }
+        if inspectedID == id {
+            syncingInspector = true
+            fontSizePt = newSize / scale
+            syncingInspector = false
+        }
+    }
+
+    private var textScaleAnchor: CGPoint = .zero
+    private var textScaleStartSize: CGFloat = 1
+    private var textScaleStartDistance: CGFloat = 1
+
+    private static func oppositeCorner(of handle: ShapeHandle, in box: CGRect) -> CGPoint {
+        switch handle {
+        case .cornerTL, .start: return CGPoint(x: box.maxX, y: box.maxY)
+        case .cornerTR: return CGPoint(x: box.minX, y: box.maxY)
+        case .cornerBL: return CGPoint(x: box.maxX, y: box.minY)
+        case .cornerBR, .end: return CGPoint(x: box.minX, y: box.minY)
+        }
+    }
+
     // MARK: Undo / redo
 
     private func snapshot() -> Snapshot {
@@ -158,6 +270,12 @@ final class EditorState: ObservableObject {
         case .select:
             if let id = selectedID, let a = annotations.first(where: { $0.id == id }),
                let handle = handleAt(p, for: a) {
+                if a.kind == .text {
+                    scaleText(id: id, handle: handle, to: p, begin: true)
+                    pushedUndoThisGesture = true
+                    gestureMode = .scalingText(id: id, handle: handle)
+                    return
+                }
                 pushUndoOnce()
                 let r = a.shapeRect
                 let anchor: CGPoint
@@ -234,6 +352,8 @@ final class EditorState: ObservableObject {
                 a.end = shiftDown ? constrained(from: anchor, to: p, kind: a.kind) : p
             }
             annotations[idx] = a
+        case .scalingText(let id, let handle):
+            scaleText(id: id, handle: handle, to: p, begin: false)
         case .croppingNew(let start):
             cropRect = CGRect(corner: start, corner: clampToImage(p))
                 .intersection(CGRect(origin: .zero, size: pixelSize))
@@ -258,6 +378,7 @@ final class EditorState: ObservableObject {
             var a = Annotation(kind: .text)
             a.color = color
             a.fontSize = fontSizePx
+            a.textStyle = textStyle
             a.start = CGPoint(x: p.x, y: max(0, p.y - a.fontSize / 2))
             annotations.append(a)
             editingTextID = a.id
@@ -353,6 +474,12 @@ final class EditorState: ObservableObject {
             if near(CGPoint(x: r.maxX, y: r.minY)) { return .cornerTR }
             if near(CGPoint(x: r.minX, y: r.maxY)) { return .cornerBL }
             if near(CGPoint(x: r.maxX, y: r.maxY)) { return .cornerBR }
+        case .text:
+            let r = a.textBox
+            if near(CGPoint(x: r.maxX, y: r.maxY)) { return .cornerBR }
+            if near(CGPoint(x: r.minX, y: r.minY)) { return .cornerTL }
+            if near(CGPoint(x: r.maxX, y: r.minY)) { return .cornerTR }
+            if near(CGPoint(x: r.minX, y: r.maxY)) { return .cornerBL }
         default:
             break
         }

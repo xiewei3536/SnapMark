@@ -186,7 +186,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     /// Physical key codes, so shortcuts work under any keyboard layout or IME
     /// (with 注音/拼音 active, `characters` returns Zhuyin/Pinyin glyphs instead of letters).
     private enum Key {
-        static let a: UInt16 = 0, s: UInt16 = 1, h: UInt16 = 4, z: UInt16 = 6, c: UInt16 = 8, v: UInt16 = 9
+        static let a: UInt16 = 0, s: UInt16 = 1, h: UInt16 = 4, z: UInt16 = 6, c: UInt16 = 8, v: UInt16 = 9, u: UInt16 = 32, i: UInt16 = 34
         static let b: UInt16 = 11, w: UInt16 = 13, e: UInt16 = 14, r: UInt16 = 15, t: UInt16 = 17
         static let equal: UInt16 = 24, nine: UInt16 = 25, minus: UInt16 = 27, zero: UInt16 = 29
         static let p: UInt16 = 35, l: UInt16 = 37, m: UInt16 = 46, ret: UInt16 = 36, esc: UInt16 = 53
@@ -204,14 +204,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.function, .numericPad])
         let code = event.keyCode
 
-        // While editing text, only Escape is ours.
+        // While editing text: Escape commits; ⌘B/I/U and ⌥⌘↑↓ restyle; everything else is typing.
         if state.editingTextID != nil {
             if code == Key.esc {
                 state.commitTextEditing()
                 return true
             }
+            if handleTextStyleShortcut(code: code, flags: flags) { return true }
             return false
         }
+        if state.inspectedIsText, handleTextStyleShortcut(code: code, flags: flags) { return true }
         // Let native text fields (save panel, popovers) work normally.
         if window?.firstResponder is NSTextView { return false }
 
@@ -263,6 +265,26 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             if flags.isEmpty, let tool = Self.toolKeys[code] {
                 state.tool = tool
                 return true
+            }
+        }
+        return false
+    }
+
+    /// ⌘B bold · ⌘I italic · ⌘U underline · ⌥⌘↑/↓ font size (for the selected or edited text).
+    private func handleTextStyleShortcut(code: UInt16, flags: NSEvent.ModifierFlags) -> Bool {
+        if flags == [.command] {
+            switch code {
+            case Key.b: state.textStyle.bold.toggle(); return true
+            case Key.i: state.textStyle.italic.toggle(); return true
+            case Key.u: state.textStyle.underline.toggle(); return true
+            default: return false
+            }
+        }
+        if flags == [.command, .option] {
+            switch code {
+            case Key.up: state.adjustFontSize(by: 2); return true
+            case Key.down: state.adjustFontSize(by: -2); return true
+            default: return false
             }
         }
         return false

@@ -82,10 +82,10 @@
 "editor.zoom_out" = "縮小（⌘−）";
 "editor.fit" = "適應視窗";
 
-"hint.select" = "點擊選取 · 拖曳移動 · 雙擊文字可編輯 · ⌫ 刪除";
+"hint.select" = "點擊選取 · 拖曳移動 · 角落縮放 · 雙擊文字可編輯 · 工具列可直接改選取物的樣式 · ⌫ 刪除";
 "hint.draw" = "拖曳即可繪製";
 "hint.shape" = "拖曳繪製 · 按住 ⇧ 可畫正方形／45° 直線";
-"hint.text" = "點擊任意位置加入文字";
+"hint.text" = "點擊加入文字 · ⇧↩ 換行 · 拖曳 ⠿ 移動 · 拖曳角落縮放 · ↩ / Esc 完成";
 "hint.badge" = "點擊放置編號步驟 ①②③";
 "hint.crop" = "拖曳選擇裁切範圍，然後按「套用裁切」";
 
@@ -238,3 +238,24 @@
 "perm.reset_record" = "重設權限記錄";
 "perm.reset_record_help" = "清除過期的記錄，讓 macOS 重新登記這個版本並再次詢問";
 "toast.perm_reset" = "權限記錄已重設，請到系統設定開啟 SnapMark，再重新啟動";
+"text.font" = "字體";
+"text.system_font" = "系統字體";
+"text.search_font" = "搜尋字體…";
+"text.common_fonts" = "常用";
+"text.all_fonts" = "全部字體";
+"text.size" = "字級";
+"text.bold" = "粗體  ⌘B";
+"text.italic" = "斜體  ⌘I";
+"text.underline" = "底線  ⌘U";
+"text.strike" = "刪除線";
+"text.align_left" = "靠左";
+"text.align_center" = "置中";
+"text.align_right" = "靠右";
+"text.plate" = "底板";
+"text.outline" = "描邊";
+"text.shadow" = "陰影";
+"text.plate_help" = "在文字後方加上對比色底板";
+"text.outline_help" = "沿字形加上對比色描邊";
+"text.shadow_help" = "柔和陰影";
+"text.grip_help" = "拖曳移動";
+"text.scale_help" = "拖曳縮放";
