@@ -21,13 +21,15 @@ enum VideoCodec: String, CaseIterable, Identifiable {
     var displayName: String { self == .h264 ? "H.264" : "HEVC (H.265)" }
 }
 
+/// What happens once a capture is finished (region ↩ / ✓, full screen, repeat region).
 enum AfterCaptureAction: String, CaseIterable, Identifiable {
-    case openEditor, copyOnly, pin
+    case copyOnly, preview, openEditor, pin
     var id: String { rawValue }
     var displayName: String {
         switch self {
-        case .openEditor: return L("settings.after.editor")
         case .copyOnly: return L("settings.after.copy_only")
+        case .preview: return L("settings.after.preview")
+        case .openEditor: return L("settings.after.editor")
         case .pin: return L("settings.after.pin")
         }
     }
@@ -43,7 +45,6 @@ final class Settings: ObservableObject {
     @Published var autoCopyToClipboard: Bool { didSet { d.set(autoCopyToClipboard, forKey: "autoCopy") } }
     @Published var autoSaveToDisk: Bool { didSet { d.set(autoSaveToDisk, forKey: "autoSave") } }
     @Published var playSound: Bool { didSet { d.set(playSound, forKey: "playSound") } }
-    @Published var showFloatingThumbnail: Bool { didSet { d.set(showFloatingThumbnail, forKey: "floatThumb") } }
     @Published var imageFormat: ImageFormat { didSet { d.set(imageFormat.rawValue, forKey: "imageFormat") } }
     @Published var jpegQuality: Double { didSet { d.set(jpegQuality, forKey: "jpegQuality") } }
     @Published var saveDirectoryPath: String { didSet { d.set(saveDirectoryPath, forKey: "saveDir") } }
@@ -68,11 +69,11 @@ final class Settings: ObservableObject {
     @Published var countdownSeconds: Int { didSet { d.set(countdownSeconds, forKey: "countdown") } }
 
     private init() {
-        afterCapture = AfterCaptureAction(rawValue: d.string(forKey: "afterCapture") ?? "") ?? .openEditor
+        // Captures are annotated in place now, so finishing one just confirms it (nothing to close).
+        afterCapture = AfterCaptureAction(rawValue: d.string(forKey: "afterCapture") ?? "") ?? .copyOnly
         autoCopyToClipboard = d.object(forKey: "autoCopy") == nil ? true : d.bool(forKey: "autoCopy")
         autoSaveToDisk = d.object(forKey: "autoSave") == nil ? true : d.bool(forKey: "autoSave")
         playSound = d.object(forKey: "playSound") == nil ? true : d.bool(forKey: "playSound")
-        showFloatingThumbnail = d.object(forKey: "floatThumb") == nil ? true : d.bool(forKey: "floatThumb")
         imageFormat = ImageFormat(rawValue: d.string(forKey: "imageFormat") ?? "") ?? .png
         jpegQuality = d.object(forKey: "jpegQuality") == nil ? 0.9 : d.double(forKey: "jpegQuality")
         saveDirectoryPath = d.string(forKey: "saveDir") ?? Settings.defaultSaveDirectory().path

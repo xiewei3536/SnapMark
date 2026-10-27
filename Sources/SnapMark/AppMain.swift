@@ -6,6 +6,9 @@ import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let dir = LaunchOptions.selfTestDir {
+            MainActor.assumeIsolated { SelfTest.run(outDir: dir) }
+        }
         AppCoordinator.shared.start()
     }
 
@@ -288,6 +291,8 @@ final class AppCoordinator: NSObject, NSMenuItemValidation {
         edit.addItem(editorItem(L("menu.copy"), key: "c", mods: [.command], #selector(menuCopy(_:))))
         edit.addItem(NSMenuItem(title: L("menu.paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
         edit.addItem(editorItem(L("menu.delete"), key: "", mods: [], #selector(menuDelete(_:))))
+        edit.addItem(editorItem(L("ctx.duplicate"), key: "d", mods: [.command], #selector(menuDuplicate(_:))))
+        edit.addItem(editorItem(L("editor.clear_all"), key: "", mods: [], #selector(menuClearAll(_:))))
         edit.addItem(NSMenuItem(title: L("menu.select_all"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
         main.addItem(wrap(edit, title: L("menu.edit")))
 
@@ -344,8 +349,10 @@ final class AppCoordinator: NSObject, NSMenuItemValidation {
             return keyEditor?.state.canRedo ?? false
         case #selector(menuCopy(_:)):
             return keyEditor != nil || NSApp.keyWindow?.firstResponder is NSTextView
-        case #selector(menuDelete(_:)):
+        case #selector(menuDelete(_:)), #selector(menuDuplicate(_:)):
             return keyEditor?.state.selectedID != nil
+        case #selector(menuClearAll(_:)):
+            return !(keyEditor?.state.annotations.isEmpty ?? true)
         case #selector(menuAction(_:)):
             return !RecorderEngine.shared.isRecording
         default:
@@ -357,10 +364,19 @@ final class AppCoordinator: NSObject, NSMenuItemValidation {
     @objc private func menuSaveAs(_ sender: Any?) { keyEditor?.saveAs() }
     @objc private func menuReveal(_ sender: Any?) { keyEditor?.revealInFinder() }
     @objc private func menuUndo(_ sender: Any?) {
+        // Typing in an annotation's text box: undo the typing first, then the document.
+        if let tv = NSApp.keyWindow?.firstResponder as? EditingTextView {
+            if let um = tv.undoManager, um.canUndo { um.undo() } else { keyEditor?.state.undo() }
+            return
+        }
         if let tv = NSApp.keyWindow?.firstResponder as? NSTextView { tv.undoManager?.undo(); return }
         keyEditor?.state.undo()
     }
     @objc private func menuRedo(_ sender: Any?) {
+        if let tv = NSApp.keyWindow?.firstResponder as? EditingTextView {
+            if let um = tv.undoManager, um.canRedo { um.redo() } else { keyEditor?.state.redo() }
+            return
+        }
         if let tv = NSApp.keyWindow?.firstResponder as? NSTextView { tv.undoManager?.redo(); return }
         keyEditor?.state.redo()
     }
@@ -369,6 +385,8 @@ final class AppCoordinator: NSObject, NSMenuItemValidation {
         keyEditor?.copyToClipboard()
     }
     @objc private func menuDelete(_ sender: Any?) { keyEditor?.state.deleteSelected() }
+    @objc private func menuDuplicate(_ sender: Any?) { keyEditor?.state.duplicateSelected() }
+    @objc private func menuClearAll(_ sender: Any?) { keyEditor?.state.removeAllAnnotations() }
     @objc private func menuZoomIn(_ sender: Any?) { if let s = keyEditor?.state { s.setZoom(s.zoom * 1.25) } }
     @objc private func menuZoomOut(_ sender: Any?) { if let s = keyEditor?.state { s.setZoom(s.zoom / 1.25) } }
     @objc private func menuZoomActual(_ sender: Any?) { keyEditor?.state.setZoom(1) }
@@ -409,80 +427,150 @@ final class AppCoordinator: NSObject, NSMenuItemValidation {
     }
 
     private func handleSelection(_ result: SelectionResult) {
-        switch result.action {
-        case .record:
+        if result.action == .record {
             // Give focus back so the recorded app doesn't look inactive in the video.
             SelectionController.shared.restorePreviousApp()
             RecordingSession.shared.begin(screen: result.screen, localRect: result.localRect)
-        case .capture, .copy, .pin, .ocr:
-            Task { @MainActor in
-                guard let image = await self.resolveImage(for: result) else {
-                    Toast.show(icon: "exclamationmark.triangle.fill", text: L("toast.capture_failed"))
-                    return
+            return
+        }
+        Task { @MainActor in
+            guard let capture = await self.resolveCapture(for: result) else {
+                Toast.show(icon: "exclamationmark.triangle.fill", text: L("toast.capture_failed"))
+                return
+            }
+            switch result.action {
+            case .capture:
+                self.deliver(capture, pinOrigin: result.globalCocoaRect.center)
+            case .copy:
+                Sounds.playShutter()
+                Clipboard.copy(image: capture.image.cgImage, scale: capture.image.scale)
+                SelectionController.shared.restorePreviousApp()
+                Toast.show(icon: "doc.on.doc.fill", text: L("toast.copied"))
+            case .save:
+                Sounds.playShutter()
+                SelectionController.shared.restorePreviousApp()
+                if let url = ImageFile.saveToCaptureFolder(capture.image, project: capture.project) {
+                    HistoryManager.shared.add(fileURL: url, kind: .image)
+                    Toast.show(icon: "square.and.arrow.down.fill", text: L("toast.saved"), subtitle: url.lastPathComponent)
+                } else {
+                    Toast.show(icon: "exclamationmark.triangle.fill", text: L("toast.save_failed"))
                 }
-                switch result.action {
-                case .capture:
-                    self.deliverCapture(image, pinOrigin: result.globalCocoaRect.center)
-                case .copy:
-                    Sounds.playShutter()
-                    Clipboard.copy(image: image.cgImage, scale: image.scale)
-                    SelectionController.shared.restorePreviousApp()
-                    Toast.show(icon: "doc.on.doc.fill", text: L("toast.copied"))
-                case .pin:
-                    Sounds.playShutter()
-                    SelectionController.shared.restorePreviousApp()
-                    PinWindowController.show(image: image, near: result.globalCocoaRect.center)
-                case .ocr:
-                    SelectionController.shared.restorePreviousApp()
-                    self.runOCRFlow(image)
-                default:
-                    break
-                }
+            case .saveAs:
+                Sounds.playShutter()
+                self.saveAs(capture)
+            case .edit:
+                EditorWindowController.open(image: capture.base, savedURL: nil, annotations: capture.annotations,
+                                            badgeCounter: capture.badgeCounter, annotationsAreSaved: false)
+            case .pin:
+                Sounds.playShutter()
+                SelectionController.shared.restorePreviousApp()
+                PinWindowController.show(image: capture.image, near: result.globalCocoaRect.center)
+            case .ocr:
+                SelectionController.shared.restorePreviousApp()
+                self.runOCRFlow(capture.base) // the original pixels: arrows and notes would only confuse it
+            case .record:
+                break
             }
         }
     }
 
-    /// Produces the final image for a selection: a clean whole-window capture when a window
-    /// was clicked, otherwise a crop of the frozen screenshot.
-    private func resolveImage(for result: SelectionResult) async -> CapturedImage? {
-        if let windowID = result.windowID, let img = try? await CaptureEngine.captureWindow(windowID: windowID) {
-            return img
+    /// A finished capture: the output image, plus what it was made of so it stays editable.
+    struct ResolvedCapture {
+        let image: CapturedImage   // with annotations
+        let base: CapturedImage    // without
+        let annotations: [Annotation] // in `base` pixels
+        let badgeCounter: Int
+
+        init(image: CapturedImage, base: CapturedImage? = nil, annotations: [Annotation] = [], badgeCounter: Int = 1) {
+            self.image = image
+            self.base = base ?? image
+            self.annotations = annotations
+            self.badgeCounter = badgeCounter
         }
-        let scale = result.frozen.scale
-        let pixelRect = CGRect(x: result.localRect.minX * scale, y: result.localRect.minY * scale,
-                               width: result.localRect.width * scale, height: result.localRect.height * scale)
-        guard let cropped = result.frozen.cgImage.cropped(toPixels: pixelRect) else { return nil }
-        return CapturedImage(cgImage: cropped, scale: scale)
+
+        var project: ProjectStore.Source? {
+            annotations.isEmpty ? nil : ProjectStore.Source(base: base.cgImage, scale: base.scale,
+                                                            annotations: annotations, badgeCounter: badgeCounter)
+        }
     }
 
-    /// Applies the user's after-capture routine to a fresh screenshot.
-    private func deliverCapture(_ image: CapturedImage, pinOrigin: CGPoint?) {
+    /// Produces the final image for a selection: a clean whole-window capture when the selection is
+    /// exactly a clicked window, otherwise a crop of the frozen screenshot — with the annotations on top.
+    private func resolveCapture(for result: SelectionResult) async -> ResolvedCapture? {
+        let session = result.annotations
+        let annotations = session?.annotations(relativeTo: result.pixelRect) ?? []
+        let counter = session?.badgeCounter ?? 1
+        // A plain window shot uses the window captured on its own when it was clicked. Once there are
+        // marks, the output is the frozen frame they were drawn on: the window may have changed since
+        // (a mosaic must keep covering what it covered), and overlapping content may have been marked.
+        if annotations.isEmpty, let windowID = result.windowID {
+            if let clean = result.windowImage { return ResolvedCapture(image: clean) }
+            if let clean = try? await CaptureEngine.captureWindow(windowID: windowID) { return ResolvedCapture(image: clean) }
+        }
+        guard let cropped = result.frozen.cgImage.cropped(toPixels: result.pixelRect) else { return nil }
+        let base = CapturedImage(cgImage: cropped, scale: result.frozen.scale)
+        guard let session, !annotations.isEmpty else { return ResolvedCapture(image: base) }
+        // Rendered from the full frozen screen so mosaics match the preview exactly.
+        let flat = session.flatten(cropTo: result.pixelRect)
+        return ResolvedCapture(image: CapturedImage(cgImage: flat, scale: base.scale), base: base,
+                               annotations: annotations, badgeCounter: counter)
+    }
+
+    /// Applies the user's after-capture routine: save and/or copy, then a toast, preview, editor or pin.
+    private func deliver(_ capture: ResolvedCapture, pinOrigin: CGPoint?) {
         Sounds.playShutter()
         let settings = Settings.shared
+        let image = capture.image
 
         var savedURL: URL?
-        if settings.autoSaveToDisk, let url = ImageFile.saveToCaptureFolder(image) {
+        if settings.autoSaveToDisk, let url = ImageFile.saveToCaptureFolder(image, project: capture.project) {
             savedURL = url
             HistoryManager.shared.add(fileURL: url, kind: .image)
         }
-        if settings.autoCopyToClipboard {
+        // Never finish with nothing to show for it: with saving off, at least copy.
+        let copied = settings.autoCopyToClipboard || savedURL == nil
+        if copied {
             Clipboard.copy(image: image.cgImage, scale: image.scale)
         }
 
         switch settings.afterCapture {
         case .openEditor:
-            let editor = EditorWindowController.open(image: image, savedURL: savedURL)
+            let editor = EditorWindowController.open(image: capture.base, savedURL: savedURL,
+                                                     annotations: capture.annotations, badgeCounter: capture.badgeCounter,
+                                                     annotationsAreSaved: savedURL != nil)
+            if !capture.annotations.isEmpty { editor.state.tool = .select }
             var parts: [String] = []
-            if settings.autoCopyToClipboard { parts.append(L("editor.status_copied")) }
+            if copied { parts.append(L("editor.status_copied")) }
             if savedURL != nil { parts.append(L("toast.saved")) }
             if !parts.isEmpty { editor.state.showStatus(parts.joined(separator: " · "), duration: 6) }
         case .copyOnly:
             SelectionController.shared.restorePreviousApp()
-            let text = settings.autoCopyToClipboard ? L("toast.captured_copied") : L("toast.captured")
-            Toast.show(icon: "camera.fill", text: text, subtitle: savedURL?.lastPathComponent)
+            let text = copied && savedURL != nil ? L("toast.copied_saved") : (copied ? L("toast.captured_copied") : L("toast.saved"))
+            Toast.show(icon: "checkmark.circle.fill", text: text, subtitle: savedURL?.lastPathComponent)
+        case .preview:
+            SelectionController.shared.restorePreviousApp()
+            CapturePreview.show(capture, savedURL: savedURL, copied: copied)
         case .pin:
             SelectionController.shared.restorePreviousApp()
             PinWindowController.show(image: image, near: pinOrigin)
+        }
+    }
+
+    private func saveAs(_ capture: ResolvedCapture) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png, .jpeg]
+        panel.canCreateDirectories = true
+        panel.directoryURL = Settings.shared.saveDirectory
+        panel.nameFieldStringValue = Settings.shared.nextFileURL(ext: Settings.shared.imageFormat.fileExtension).lastPathComponent
+        NSApp.activate(ignoringOtherApps: true)
+        let response = panel.runModal()
+        SelectionController.shared.restorePreviousApp()
+        guard response == .OK, let url = panel.url else { return }
+        if ImageFile.write(capture.image, to: url, project: capture.project) {
+            HistoryManager.shared.add(fileURL: url, kind: .image)
+            Toast.show(icon: "square.and.arrow.down.fill", text: L("toast.saved"), subtitle: url.lastPathComponent)
+        } else {
+            Toast.show(icon: "exclamationmark.triangle.fill", text: L("toast.save_failed"))
         }
     }
 
@@ -507,7 +595,7 @@ final class AppCoordinator: NSObject, NSMenuItemValidation {
             do {
                 let image = try await CaptureEngine.captureDisplay(
                     screen: screen, showCursor: Settings.shared.showCursorInScreenshot)
-                deliverCapture(image, pinOrigin: screen.frame.center)
+                deliver(ResolvedCapture(image: image), pinOrigin: screen.frame.center)
             } catch {
                 handleMissingPermission()
                 if CaptureEngine.hasPermission() {
@@ -534,7 +622,7 @@ final class AppCoordinator: NSObject, NSMenuItemValidation {
                 let pixelRect = CGRect(x: last.localRect.minX * scale, y: last.localRect.minY * scale,
                                        width: last.localRect.width * scale, height: last.localRect.height * scale)
                 guard let cropped = full.cgImage.cropped(toPixels: pixelRect) else { return }
-                deliverCapture(CapturedImage(cgImage: cropped, scale: scale), pinOrigin: nil)
+                deliver(ResolvedCapture(image: CapturedImage(cgImage: cropped, scale: scale)), pinOrigin: nil)
             } catch {
                 handleMissingPermission()
             }

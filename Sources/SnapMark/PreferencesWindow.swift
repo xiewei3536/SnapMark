@@ -117,6 +117,10 @@ struct GeneralPrefs: View {
                         Text(action.displayName).tag(action)
                     }
                 }
+                Text(L("prefs.after_capture_note"))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Toggle(L("prefs.auto_copy"), isOn: $settings.autoCopyToClipboard)
                 Toggle(L("prefs.auto_save"), isOn: $settings.autoSaveToDisk)
                 Toggle(L("prefs.play_sound"), isOn: $settings.playSound)
@@ -349,7 +353,7 @@ struct AboutPrefs: View {
             Text(L("about.tagline"))
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
-            Text("Version 1.2.0 · Universal (Apple Silicon + Intel) · macOS 13+")
+            Text("Version 1.3.0 · Universal (Apple Silicon + Intel) · macOS 13+")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
 

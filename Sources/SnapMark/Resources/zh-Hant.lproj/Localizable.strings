@@ -24,7 +24,7 @@
 
 /* 選取覆蓋層 */
 "overlay.hint" = "拖曳選取範圍 · 點擊視窗自動吸附 · Esc 取消";
-"overlay.hint_window" = "點擊要擷取的視窗 · Esc 取消";
+"overlay.hint_window" = "點擊視窗選取（雙擊直接完成） · 也可拖曳選取範圍 · Esc 取消";
 "overlay.capture" = "截圖";
 "overlay.record" = "錄影";
 "overlay.pin" = "釘選";
@@ -82,12 +82,12 @@
 "editor.zoom_out" = "縮小（⌘−）";
 "editor.fit" = "適應視窗";
 
-"hint.select" = "點擊選取 · 拖曳移動 · 角落縮放 · 雙擊文字可編輯 · 工具列可直接改選取物的樣式 · ⌫ 刪除";
-"hint.draw" = "拖曳即可繪製";
-"hint.shape" = "拖曳繪製 · 按住 ⇧ 可畫正方形／45° 直線";
-"hint.text" = "點擊加入文字 · ⇧↩ 換行 · 拖曳 ⠿ 移動 · 拖曳角落縮放 · ↩ / Esc 完成";
-"hint.badge" = "點擊放置編號步驟 ①②③";
-"hint.crop" = "拖曳選擇裁切範圍，然後按「套用裁切」";
+"hint.select" = "點擊選取 · 拖曳移動 · 拉控制點縮放／拉伸 · 雙擊文字可編輯 · 右鍵更多 · ⌫ 刪除";
+"hint.draw" = "拖曳即可繪製 · 拉選取物的控制點可縮放 · ⌘ 拖曳可移動既有標註";
+"hint.shape" = "拖曳繪製 · ⇧ 正方形／45° · 拖曳已畫的標註可移動、拉控制點可拉伸";
+"hint.text" = "點擊加入文字 · ⇧↩ 換行 · 拖曳外框移動 · 拉角落縮放 · ↩ / Esc 完成";
+"hint.badge" = "點擊放置編號步驟 ①②③ · 拖曳可移動、拉角落可縮放";
+"hint.crop" = "拖曳選擇裁切範圍，可再拖曳移動或拉邊角調整，然後按「套用裁切」";
 
 /* 釘選 */
 "pin.edit" = "標註";
@@ -128,10 +128,10 @@
 "prefs.about" = "關於";
 "prefs.language" = "語言";
 "prefs.launch_at_login" = "登入時啟動";
-"prefs.after_capture" = "截圖之後";
+"prefs.after_capture" = "截圖完成後";
 "prefs.after_capture_action" = "接著";
 "settings.after.editor" = "開啟編輯器";
-"settings.after.copy_only" = "僅顯示提示";
+"settings.after.copy_only" = "只顯示提示（不跳出視窗）";
 "settings.after.pin" = "釘選到螢幕";
 "prefs.auto_copy" = "自動拷貝到剪貼板";
 "prefs.auto_save" = "自動儲存到資料夾";
@@ -259,3 +259,29 @@
 "text.shadow_help" = "柔和陰影";
 "text.grip_help" = "拖曳移動";
 "text.scale_help" = "拖曳縮放";
+
+/* 1.3 原地標註、移動／拉伸、可再編輯 */
+"overlay.done" = "完成";
+"overlay.done_help" = "完成：拷貝並儲存";
+"overlay.edit" = "在編輯器開啟（標註仍可編輯）";
+"overlay.save" = "儲存到資料夾";
+"overlay.window_snapped" = "視窗";
+"overlay.hint_selected_annotate" = "選擇工具直接在上面標註 · ↩ 或雙擊完成 · ⌘C 拷貝 · 拖曳邊角調整範圍 · Esc 取消";
+"overlay.hint_annotating" = "拖曳繪製 · 拖曳標註可移動、拉控制點可拉伸 · ⌘Z 復原 · ↩ 完成 · 再點一次目前工具可調整範圍";
+"editor.done" = "完成";
+"editor.done_help" = "拷貝到剪貼板、儲存並關閉";
+"editor.clear_all" = "移除全部標註";
+"editor.clear_all_help" = "清除所有標註、回到原始截圖（可復原）";
+"editor.status_restored" = "已還原上次的標註，可繼續移動、修改或復原";
+"ctx.edit_text" = "編輯文字";
+"ctx.duplicate" = "複製一份";
+"ctx.front" = "移到最上層";
+"ctx.back" = "移到最下層";
+"ctx.delete" = "刪除";
+"style.badge_size" = "標號大小";
+"style.brush" = "筆刷大小";
+"toast.copied_saved" = "已拷貝並儲存";
+"settings.after.preview" = "顯示縮圖預覽（自動消失）";
+"preview.annotate" = "標註";
+"prefs.after_capture_note" = "區域與視窗截圖會直接在選取範圍上標註，按 ↩ 或「完成」即拷貝／儲存，不必再關視窗。";
+"overlay.esc_again" = "再按一次 Esc 放棄這張截圖與標註";

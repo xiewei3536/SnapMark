@@ -1,13 +1,23 @@
 import AppKit
 import SwiftUI
 
-/// All model state for one editor window.
+/// All model state for one annotation session: an editor window, or the capture overlay.
 @MainActor
 final class EditorState: ObservableObject {
     struct Snapshot {
         var base: CGImage
         var annotations: [Annotation]
         var badgeCounter: Int
+        var serial = 0 // identifies a step, so "is my step still on top?" survives the stack cap
+    }
+
+    /// What lies under the pointer: decides both the cursor and what a press does.
+    enum PointerTarget: Equatable {
+        case none
+        case handle(AnnotationHandle) // on the selected (or edited) annotation
+        case move(UUID)
+        case cropHandle(AnnotationHandle)
+        case cropMove
     }
 
     @Published private(set) var base: CGImage
@@ -15,14 +25,17 @@ final class EditorState: ObservableObject {
     var originalURL: URL?
 
     @Published var annotations: [Annotation] = []
-    @Published var draft: Annotation?
+    /// The shape being drawn. Not published: the canvas redraws it on every drag itself, and
+    /// re-rendering the toolbars per mouse event would only cost time.
+    var draft: Annotation?
     @Published var selectedID: UUID? { didSet { if selectedID != oldValue { syncInspectorFromSelection() } } }
-    @Published var editingTextID: UUID? { didSet { if editingTextID != oldValue { syncInspectorFromSelection() } } }
+    @Published private(set) var editingTextID: UUID? { didSet { if editingTextID != oldValue { syncInspectorFromSelection() } } }
     @Published var tool: Tool = .arrow {
         didSet {
+            guard tool != oldValue else { return }
+            commitTextEditing()
             if tool != .select { selectedID = nil }
             if tool != .crop { cropRect = nil }
-            commitTextEditing()
         }
     }
 
@@ -40,9 +53,14 @@ final class EditorState: ObservableObject {
     @Published var textStyle = TextStyle() {
         didSet { if textStyle != oldValue { applyToInspected(only: [.text]) { $0.textStyle = textStyle } } }
     }
-    @Published var mosaicBlur = false
+    @Published var mosaicBlur = false {
+        didSet { if mosaicBlur != oldValue { applyToInspected(only: [.mosaic]) { $0.mosaicBlur = mosaicBlur } } }
+    }
     @Published var zoom: CGFloat = 1
     @Published var cropRect: CGRect?
+
+    /// Bumped whenever the undo/redo stacks change so toolbar buttons refresh.
+    @Published private(set) var historyRevision = 0
 
     /// Transient feedback shown in the status bar ("Copied", "Saved …"). Auto-clears.
     @Published private(set) var statusMessage: String?
@@ -51,6 +69,12 @@ final class EditorState: ObservableObject {
     var badgeCounter = 1
     let filters = FilteredImageCache()
     var viewportSize: CGSize = .zero
+
+    /// Limits drawing and moving to part of the image (pixels). The capture overlay's base is the
+    /// entire frozen screen and only the selected region is in play; the editor uses the whole image.
+    var region: CGRect?
+
+    var interactionBounds: CGRect { region ?? CGRect(origin: .zero, size: pixelSize) }
 
     private var undoStack: [Snapshot] = []
     private var redoStack: [Snapshot] = []
@@ -65,23 +89,40 @@ final class EditorState: ObservableObject {
     private enum GestureMode {
         case none
         case drawing
-        case movingAnnotation(id: UUID, last: CGPoint)
-        case resizingAnnotation(id: UUID, handle: ShapeHandle, anchor: CGPoint)
-        case scalingText(id: UUID, handle: ShapeHandle)
+        case moving(id: UUID, origin: Annotation, tapEditsText: Bool)
+        case resizing(id: UUID, handle: AnnotationHandle, origin: Annotation)
+        case pendingTap // text / badge: placed on release
         case croppingNew(start: CGPoint)
+        case movingCrop(origin: CGRect)
+        case resizingCrop(handle: AnnotationHandle, origin: CGRect)
     }
     private var gestureMode: GestureMode = .none
     private var gestureStart: CGPoint = .zero
+    private var movedThisGesture = false
     private var pushedUndoThisGesture = false
 
-    /// `start`/`end` are line endpoints; the corner cases are visual rect corners (anchor = opposite corner).
-    enum ShapeHandle { case start, end, cornerTL, cornerTR, cornerBL, cornerBR }
+    // Text-edit session: one undo step per edit, none for an edit that changed nothing. The step is
+    // provisional (it doesn't clear redo) until the edit turns out to change something.
+    private var textEditStep: Int?
+    private var textEditOriginal: Annotation?
+    private var textEditIsNew = false
 
-    init(image: CapturedImage, originalURL: URL?) {
+    // Bursts (slider drags, arrow-key nudges) share one step while nothing else touched the history.
+    private var burstKey: String?
+    private var burstStep = -1
+    private var burstTime = Date.distantPast
+    private var nextSerial = 1
+
+    init(image: CapturedImage, originalURL: URL?, annotations: [Annotation] = [],
+         badgeCounter: Int? = nil, annotationsAreSaved: Bool = true) {
         self.base = image.cgImage
         self.savedBase = image.cgImage
         self.scale = image.scale
         self.originalURL = originalURL
+        self.annotations = annotations
+        self.savedAnnotations = annotationsAreSaved ? annotations : []
+        let maxBadge = annotations.filter { $0.kind == .badge }.map(\.badgeNumber).max() ?? 0
+        self.badgeCounter = badgeCounter ?? (maxBadge + 1)
     }
 
     // MARK: Derived geometry
@@ -94,6 +135,9 @@ final class EditorState: ObservableObject {
 
     var lineWidthPx: CGFloat { lineWidthPt * scale }
     var fontSizePx: CGFloat { fontSizePt * scale }
+
+    /// A distance of `points` on screen, in image pixels at the current zoom.
+    func pixels(forViewPoints points: CGFloat) -> CGFloat { points / max(pxToView, 0.01) }
 
     func fitZoom() -> CGFloat {
         guard viewportSize.width > 40, viewportSize.height > 40 else { return 1 }
@@ -123,26 +167,39 @@ final class EditorState: ObservableObject {
         savedBase = base
     }
 
+    // MARK: Lookup
+
+    func annotation(_ id: UUID?) -> Annotation? {
+        guard let id else { return nil }
+        return annotations.first { $0.id == id }
+    }
+
+    private func index(of id: UUID) -> Int? { annotations.firstIndex { $0.id == id } }
+
+    var selected: Annotation? { annotation(selectedID) }
+
     // MARK: Inspector ↔ selection
 
     /// The annotation the inspector controls: the text being edited, else the selection.
     var inspectedID: UUID? { editingTextID ?? selectedID }
-    var inspected: Annotation? { inspectedID.flatMap { id in annotations.first { $0.id == id } } }
+    var inspected: Annotation? { annotation(inspectedID) }
     var inspectedIsText: Bool { inspected?.kind == .text }
 
     private var syncingInspector = false
-    private var lastInspectorUndo = Date.distantPast
 
     private func applyToInspected(only: Set<Annotation.Kind>? = nil, excluding: Set<Annotation.Kind> = [],
                                   _ mutate: (inout Annotation) -> Void) {
-        guard !syncingInspector, let id = inspectedID,
-              let idx = annotations.firstIndex(where: { $0.id == id }) else { return }
+        guard !syncingInspector, let id = inspectedID, let idx = index(of: id) else { return }
         let kind = annotations[idx].kind
         if let only, !only.contains(kind) { return }
         if excluding.contains(kind) { return }
+        // Restyling the box being typed in is part of that edit's step.
+        if id == editingTextID, ownTextStepOnTop {
+            mutate(&annotations[idx])
+            return
+        }
         // Slider drags produce many changes; one undo step per burst.
-        if Date().timeIntervalSince(lastInspectorUndo) > 1.2 { pushUndo() }
-        lastInspectorUndo = Date()
+        pushUndoForBurst("inspector", within: 1.2)
         mutate(&annotations[idx])
     }
 
@@ -150,101 +207,128 @@ final class EditorState: ObservableObject {
     private func syncInspectorFromSelection() {
         guard let a = inspected else { return }
         syncingInspector = true
+        defer { syncingInspector = false }
         color = a.color
         switch a.kind {
         case .text:
             fontSizePt = a.fontSize / scale
             textStyle = a.textStyle
+        case .mosaic:
+            lineWidthPt = a.lineWidth / scale
+            mosaicBlur = a.mosaicBlur
         default:
             lineWidthPt = a.lineWidth / scale
         }
-        syncingInspector = false
     }
 
-    // MARK: Text editing operations
+    // MARK: Text editing
 
     func adjustFontSize(by delta: CGFloat) {
         fontSizePt = min(200, max(6, fontSizePt + delta))
     }
 
     func updateText(id: UUID, _ text: String) {
-        guard let idx = annotations.firstIndex(where: { $0.id == id }), annotations[idx].text != text else { return }
+        guard let idx = index(of: id), annotations[idx].text != text else { return }
         annotations[idx].text = text
     }
 
-    /// Moves a text annotation by a pixel delta (used by the grip while editing).
-    func moveText(id: UUID, by delta: CGPoint, begin: Bool) {
-        guard let idx = annotations.firstIndex(where: { $0.id == id }) else { return }
-        if begin { pushUndo() }
-        annotations[idx].translate(by: delta)
-        let box = annotations[idx].textBox
-        annotations[idx].start.x = min(max(-box.width + 20, annotations[idx].start.x), pixelSize.width - 20)
-        annotations[idx].start.y = min(max(-box.height + 20, annotations[idx].start.y), pixelSize.height - 20)
+    /// Opens a text annotation for typing. `isNew` texts already pushed their (provisional) step
+    /// when they were created.
+    func beginEditingText(_ id: UUID, isNew: Bool = false) {
+        guard editingTextID != id, let a = annotation(id), a.kind == .text else { return }
+        commitTextEditing()
+        if !isNew { pushUndo(clearsRedo: false) }
+        textEditStep = undoStack.last?.serial
+        textEditOriginal = a
+        textEditIsNew = isNew
+        selectedID = nil
+        editingTextID = id
     }
 
-    /// Scales a text annotation by dragging one of its corners; the opposite corner stays put.
-    func scaleText(id: UUID, handle: ShapeHandle, to p: CGPoint, begin: Bool) {
-        guard let idx = annotations.firstIndex(where: { $0.id == id }) else { return }
-        if begin {
-            pushUndo()
-            let box = annotations[idx].textBox
-            textScaleAnchor = Self.oppositeCorner(of: handle, in: box)
-            textScaleStartSize = annotations[idx].fontSize
-            textScaleStartDistance = max(1, hypot(p.x - textScaleAnchor.x, p.y - textScaleAnchor.y))
+    /// The edit session's own snapshot is still the latest step.
+    private var ownTextStepOnTop: Bool { textEditStep != nil && undoStack.last?.serial == textEditStep }
+
+    enum TextCommitResult { case notEditing, discardedEmptyNew, unchanged, changed }
+
+    @discardableResult
+    func commitTextEditing() -> TextCommitResult {
+        guard let id = editingTextID else { return .notEditing }
+        let ownStepOnTop = ownTextStepOnTop
+        editingTextID = nil
+        textEditStep = nil
+        guard let idx = index(of: id) else { return .changed }
+        if annotations[idx].text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            annotations.remove(at: idx)
+            if !textEditIsNew { // emptied an existing text = deleted it
+                committedChange()
+                return .changed
+            }
+            // Creating a text and leaving it empty is not worth an undo step.
+            if ownStepOnTop { dropLastUndo() }
+            return .discardedEmptyNew
         }
-        let factor = hypot(p.x - textScaleAnchor.x, p.y - textScaleAnchor.y) / textScaleStartDistance
-        let newSize = min(400 * scale, max(6 * scale, textScaleStartSize * factor))
-        annotations[idx].fontSize = newSize
-        let box = annotations[idx].measuredTextSize()
-        switch handle {
-        case .cornerBR, .end: annotations[idx].start = textScaleAnchor
-        case .cornerTL, .start: annotations[idx].start = CGPoint(x: textScaleAnchor.x - box.width, y: textScaleAnchor.y - box.height)
-        case .cornerTR: annotations[idx].start = CGPoint(x: textScaleAnchor.x, y: textScaleAnchor.y - box.height)
-        case .cornerBL: annotations[idx].start = CGPoint(x: textScaleAnchor.x - box.width, y: textScaleAnchor.y)
+        selectedID = id // stays grabbable: drag to move, corners to scale
+        if !textEditIsNew, ownStepOnTop, annotations[idx] == textEditOriginal {
+            dropLastUndo() // opened, nothing changed
+            return .unchanged
         }
-        if inspectedID == id {
-            syncingInspector = true
-            fontSizePt = newSize / scale
-            syncingInspector = false
-        }
+        committedChange()
+        return .changed
     }
 
-    private var textScaleAnchor: CGPoint = .zero
-    private var textScaleStartSize: CGFloat = 1
-    private var textScaleStartDistance: CGFloat = 1
-
-    private static func oppositeCorner(of handle: ShapeHandle, in box: CGRect) -> CGPoint {
-        switch handle {
-        case .cornerTL, .start: return CGPoint(x: box.maxX, y: box.maxY)
-        case .cornerTR: return CGPoint(x: box.minX, y: box.maxY)
-        case .cornerBL: return CGPoint(x: box.maxX, y: box.minY)
-        case .cornerBR, .end: return CGPoint(x: box.minX, y: box.minY)
-        }
+    /// A provisional step became real: the redo future no longer applies.
+    private func committedChange() {
+        guard !redoStack.isEmpty else { return }
+        redoStack.removeAll()
+        historyRevision += 1
     }
 
     // MARK: Undo / redo
 
     private func snapshot() -> Snapshot {
-        Snapshot(base: base, annotations: annotations, badgeCounter: badgeCounter)
+        defer { nextSerial += 1 }
+        return Snapshot(base: base, annotations: annotations, badgeCounter: badgeCounter, serial: nextSerial)
     }
 
-    func pushUndo() {
+    /// Records the current state as an undo step. Any new edit invalidates the redo future —
+    /// except provisional steps (text edits), which clear it only once they turn out to change something.
+    func pushUndo(clearsRedo: Bool = true) {
         undoStack.append(snapshot())
-        if undoStack.count > 100 { undoStack.removeFirst() }
-        redoStack.removeAll()
+        if undoStack.count > 200 { undoStack.removeFirst() }
+        if clearsRedo { redoStack.removeAll() }
+        burstKey = nil
+        historyRevision += 1
     }
 
-    var canUndo: Bool { !undoStack.isEmpty }
+    /// One step per burst of the same kind of edit, as long as nothing else touched the history.
+    private func pushUndoForBurst(_ key: String, within window: TimeInterval) {
+        let now = Date()
+        defer { burstTime = now }
+        if burstKey == key, undoStack.last?.serial == burstStep, now.timeIntervalSince(burstTime) < window { return }
+        pushUndo()
+        burstKey = key
+        burstStep = undoStack.last?.serial ?? -1
+    }
+
+    private func dropLastUndo() {
+        _ = undoStack.popLast()
+        historyRevision += 1
+    }
+
+    var canUndo: Bool { !undoStack.isEmpty || editingTextID != nil }
     var canRedo: Bool { !redoStack.isEmpty }
 
     func undo() {
-        commitTextEditing()
+        // Undo while typing: an untouched new text box just goes away; otherwise the edit is
+        // committed and then undone like any other step.
+        if commitTextEditing() == .discardedEmptyNew { return }
         guard let snap = undoStack.popLast() else { return }
         redoStack.append(snapshot())
         restore(snap)
     }
 
     func redo() {
+        commitTextEditing()
         guard let snap = redoStack.popLast() else { return }
         undoStack.append(snapshot())
         restore(snap)
@@ -252,170 +336,236 @@ final class EditorState: ObservableObject {
 
     private func restore(_ snap: Snapshot) {
         base = snap.base
-        annotations = snap.annotations
+        // A snapshot taken mid-typing may hold a still-empty text box; it has nothing to show.
+        annotations = snap.annotations.filter { $0.kind != .text || !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         badgeCounter = snap.badgeCounter
-        selectedID = nil
+
+        if let id = selectedID, index(of: id) == nil { selectedID = nil }
         editingTextID = nil
+        textEditStep = nil
         draft = nil
+        gestureMode = .none
+        burstKey = nil
+        syncInspectorFromSelection() // the controls show the restored values
+        historyRevision += 1
     }
 
-    // MARK: Gestures (all points in image pixel coordinates)
+    // MARK: Pointer (all points in image pixel coordinates)
 
-    func gestureBegan(at p: CGPoint) {
-        gestureStart = p
-        pushedUndoThisGesture = false
-        commitTextEditing()
+    private var handleTolerance: CGFloat { pixels(forViewPoints: 8) }
+    private var hitTolerance: CGFloat { pixels(forViewPoints: 6) }
+    private var dragThreshold: CGFloat { pixels(forViewPoints: 3) }
 
-        switch tool {
-        case .select:
-            if let id = selectedID, let a = annotations.first(where: { $0.id == id }),
-               let handle = handleAt(p, for: a) {
-                if a.kind == .text {
-                    scaleText(id: id, handle: handle, to: p, begin: true)
-                    pushedUndoThisGesture = true
-                    gestureMode = .scalingText(id: id, handle: handle)
-                    return
-                }
-                pushUndoOnce()
-                let r = a.shapeRect
-                let anchor: CGPoint
-                switch handle {
-                case .cornerTL: anchor = CGPoint(x: r.maxX, y: r.maxY)
-                case .cornerTR: anchor = CGPoint(x: r.minX, y: r.maxY)
-                case .cornerBL: anchor = CGPoint(x: r.maxX, y: r.minY)
-                case .cornerBR: anchor = CGPoint(x: r.minX, y: r.minY)
-                case .start: anchor = a.end
-                case .end: anchor = a.start
-                }
-                gestureMode = .resizingAnnotation(id: id, handle: handle, anchor: anchor)
-                return
+    func target(at p: CGPoint, command: Bool = false) -> PointerTarget {
+        func near(_ q: CGPoint) -> Bool { hypot(p.x - q.x, p.y - q.y) <= handleTolerance }
+
+        if tool == .crop {
+            if let r = cropRect, r.width > 0, r.height > 0 {
+                for h in AnnotationHandle.boxHandles where near(r.point(for: h)) { return .cropHandle(h) }
+                if r.contains(p) { return .cropMove }
             }
-            if let id = hitTest(p) {
-                selectedID = id
-                gestureMode = .movingAnnotation(id: id, last: p)
-            } else {
-                selectedID = nil
-                gestureMode = .none
-            }
-        case .crop:
-            gestureMode = .croppingNew(start: p)
-            cropRect = CGRect(origin: p, size: .zero)
-        case .text, .badge:
-            gestureMode = .none // handled on tap in gestureEnded
-        case .pen, .highlighter, .mosaic:
-            pushUndoOnce()
-            var a = Annotation(kind: tool == .pen ? .pen : (tool == .highlighter ? .highlighter : .mosaic))
-            a.color = color
-            a.lineWidth = lineWidthPx
-            a.points = [p]
-            a.mosaicBlur = mosaicBlur
-            if tool == .mosaic { filters.prepare(for: base) }
-            draft = a
-            gestureMode = .drawing
-        case .line, .arrow, .rect, .ellipse:
-            pushUndoOnce()
-            var a = Annotation(kind: tool == .line ? .line : tool == .arrow ? .arrow : tool == .rect ? .rect : .ellipse)
-            a.color = color
-            a.lineWidth = lineWidthPx
-            a.start = p
-            a.end = p
-            draft = a
-            gestureMode = .drawing
+            return .none
         }
+        if let id = editingTextID, let a = annotation(id) {
+            for (h, q) in a.handlePoints() where near(q) { return .handle(h) }
+            // The text view covers the box; the band around it is the grip for moving.
+            let box = a.textBox
+            if box.insetBy(dx: -hitTolerance, dy: -hitTolerance).contains(p), !box.insetBy(dx: 2, dy: 2).contains(p) {
+                return .move(id)
+            }
+            return .none
+        }
+        if let a = selected {
+            for (h, q) in a.handlePoints() where near(q) { return .handle(h) }
+        }
+        if !tool.isFreehand || command, let id = hitTest(p, loose: tool == .select) {
+            return .move(id)
+        }
+        return .none
     }
 
-    func gestureChanged(to p: CGPoint, shiftDown: Bool) {
-        switch gestureMode {
-        case .drawing:
-            guard var a = draft else { return }
-            switch a.kind {
-            case .pen, .highlighter, .mosaic:
-                if let last = a.points.last, hypot(p.x - last.x, p.y - last.y) < 1.5 { return }
-                a.points.append(p)
+    func pointerDown(at p: CGPoint, clickCount: Int = 1, modifiers: NSEvent.ModifierFlags = []) {
+        gestureStart = p
+        movedThisGesture = false
+        pushedUndoThisGesture = false
+        gestureMode = .none
+        let command = modifiers.contains(.command)
+
+        // While typing, a press on the box's rim/handles moves or scales it; anywhere else ends the edit.
+        if let editID = editingTextID {
+            switch target(at: p, command: command) {
+            case .handle(let h):
+                if let a = annotation(editID) { gestureMode = .resizing(id: editID, handle: h, origin: a) }
+                pushedUndoThisGesture = ownTextStepOnTop // covered by the edit's step
+                return
+            case .move(let id) where id == editID:
+                if let a = annotation(id) { gestureMode = .moving(id: id, origin: a, tapEditsText: false) }
+                pushedUndoThisGesture = ownTextStepOnTop
+                return
             default:
-                a.end = shiftDown ? constrained(from: a.start, to: p, kind: a.kind) : p
+                commitTextEditing()
+                if tool == .text { return } // one click = one action: finishing, not starting a new text
             }
-            draft = a
-        case .movingAnnotation(let id, let last):
-            guard let idx = annotations.firstIndex(where: { $0.id == id }) else { return }
-            pushUndoOnce()
-            annotations[idx].translate(by: CGPoint(x: p.x - last.x, y: p.y - last.y))
-            gestureMode = .movingAnnotation(id: id, last: p)
-        case .resizingAnnotation(let id, let handle, let anchor):
-            guard let idx = annotations.firstIndex(where: { $0.id == id }) else { return }
-            var a = annotations[idx]
-            switch handle {
-            case .start: a.start = p
-            case .end: a.end = p
-            case .cornerTL, .cornerTR, .cornerBL, .cornerBR:
-                a.start = anchor
-                a.end = shiftDown ? constrained(from: anchor, to: p, kind: a.kind) : p
-            }
-            annotations[idx] = a
-        case .scalingText(let id, let handle):
-            scaleText(id: id, handle: handle, to: p, begin: false)
-        case .croppingNew(let start):
-            cropRect = CGRect(corner: start, corner: clampToImage(p))
-                .intersection(CGRect(origin: .zero, size: pixelSize))
+        }
+
+        // Double-click a text to edit it, whatever the tool.
+        if clickCount >= 2, let id = hitTest(p, loose: false), annotation(id)?.kind == .text {
+            beginEditingText(id)
+            return
+        }
+
+        switch target(at: p, command: command) {
+        case .handle(let h):
+            if let a = selected { gestureMode = .resizing(id: a.id, handle: h, origin: a) }
+            return
+        case .move(let id):
+            guard let a = annotation(id) else { return }
+            selectedID = id
+            gestureMode = .moving(id: id, origin: a, tapEditsText: tool == .text && a.kind == .text)
+            return
+        case .cropHandle(let h):
+            if let r = cropRect { gestureMode = .resizingCrop(handle: h, origin: r) }
+            return
+        case .cropMove:
+            if let r = cropRect { gestureMode = .movingCrop(origin: r) }
+            return
         case .none:
             break
         }
-    }
-
-    func gestureEnded(at p: CGPoint) {
-        defer { gestureMode = .none }
-        let wasTap = hypot(p.x - gestureStart.x, p.y - gestureStart.y) < 3 * scale
 
         switch tool {
-        case .text where wasTap:
-            // Tap on existing text edits it; otherwise create a new label here.
-            if let existing = annotations.last(where: { $0.kind == .text && $0.bounds.contains(p) }) {
-                selectedID = nil
-                editingTextID = existing.id
-                return
-            }
-            pushUndoOnce()
-            var a = Annotation(kind: .text)
-            a.color = color
-            a.fontSize = fontSizePx
-            a.textStyle = textStyle
-            a.start = CGPoint(x: p.x, y: max(0, p.y - a.fontSize / 2))
-            annotations.append(a)
-            editingTextID = a.id
+        case .select:
             selectedID = nil
-            return
-        case .badge where wasTap:
-            pushUndoOnce()
-            var a = Annotation(kind: .badge)
+        case .crop:
+            let start = clampToImage(p)
+            gestureMode = .croppingNew(start: start)
+            cropRect = CGRect(origin: start, size: .zero)
+        case .text, .badge:
+            selectedID = nil
+            gestureMode = .pendingTap
+        case .pen, .highlighter, .mosaic:
+            selectedID = nil
+            var a = Annotation(kind: tool == .pen ? .pen : (tool == .highlighter ? .highlighter : .mosaic))
             a.color = color
             a.lineWidth = lineWidthPx
-            a.badgeNumber = badgeCounter
-            a.start = p
-            badgeCounter += 1
-            annotations.append(a)
-            return
-        case .select where wasTap:
-            return
-        case .crop where wasTap:
-            cropRect = nil
-            return
-        default:
+            a.points = [clampToBounds(p)]
+            a.mosaicBlur = mosaicBlur
+            if tool == .mosaic { filters.prepare(for: base, scale: scale) }
+            draft = a
+            gestureMode = .drawing
+        case .line, .arrow, .rect, .ellipse:
+            selectedID = nil
+            var a = Annotation(kind: tool == .line ? .line : tool == .arrow ? .arrow : tool == .rect ? .rect : .ellipse)
+            a.color = color
+            a.lineWidth = lineWidthPx
+            a.start = clampToBounds(p)
+            a.end = a.start
+            draft = a
+            gestureMode = .drawing
+        }
+    }
+
+    func pointerDragged(to p: CGPoint, modifiers: NSEvent.ModifierFlags = []) {
+        let shift = modifiers.contains(.shift)
+        let delta = CGPoint(x: p.x - gestureStart.x, y: p.y - gestureStart.y)
+        if !movedThisGesture, hypot(delta.x, delta.y) >= dragThreshold { movedThisGesture = true }
+
+        switch gestureMode {
+        case .drawing:
+            guard var a = draft else { return }
+            let q = clampToBounds(p)
+            switch a.kind {
+            case .pen, .highlighter, .mosaic:
+                if let last = a.points.last, hypot(q.x - last.x, q.y - last.y) < pixels(forViewPoints: 0.75) { return }
+                a.points.append(q)
+            default:
+                a.end = shift ? constrained(from: a.start, to: q, kind: a.kind) : q
+            }
+            draft = a
+        case .moving(let id, let origin, _):
+            guard movedThisGesture, let idx = index(of: id) else { return }
+            pushUndoOnce()
+            var moved = origin
+            moved.translate(by: clampedDelta(delta, for: origin.frame))
+            annotations[idx] = moved
+        case .resizing(let id, let handle, let origin):
+            guard movedThisGesture || hypot(delta.x, delta.y) > 0, let idx = index(of: id) else { return }
+            pushUndoOnce()
+            annotations[idx] = origin.resized(handle, by: delta, keepAspect: shift)
+            if origin.kind == .text, inspectedID == id {
+                syncingInspector = true
+                fontSizePt = annotations[idx].fontSize / scale
+                syncingInspector = false
+            }
+        case .croppingNew(let start):
+            cropRect = CGRect(corner: start, corner: clampToImage(p)).intersection(imageRect)
+        case .movingCrop(let origin):
+            var r = origin.offsetBy(dx: delta.x, dy: delta.y)
+            r.origin.x = min(max(0, r.minX), pixelSize.width - r.width)
+            r.origin.y = min(max(0, r.minY), pixelSize.height - r.height)
+            cropRect = r
+        case .resizingCrop(let handle, let origin):
+            let (x0, y0, x1, y1) = origin.draggedEdges(handle, by: delta)
+            cropRect = CGRect(corner: CGPoint(x: x0, y: y0), corner: CGPoint(x: x1, y: y1)).intersection(imageRect)
+        case .pendingTap, .none:
             break
         }
+    }
 
-        if case .drawing = gestureMode, let a = draft {
+    func pointerUp(at p: CGPoint, modifiers: NSEvent.ModifierFlags = []) {
+        let mode = gestureMode
+        gestureMode = .none
+        let wasTap = !movedThisGesture
+
+        switch mode {
+        case .drawing:
+            guard let a = draft else { return }
             draft = nil
             let tooSmall: Bool
             switch a.kind {
             case .pen, .highlighter, .mosaic: tooSmall = a.points.count < 2
-            default: tooSmall = hypot(a.end.x - a.start.x, a.end.y - a.start.y) < 3
+            default: tooSmall = hypot(a.end.x - a.start.x, a.end.y - a.start.y) < max(3, dragThreshold)
             }
-            if !tooSmall {
+            guard !tooSmall else { return }
+            pushUndo()
+            annotations.append(a)
+            // Fresh shapes stay selected so they can be nudged, stretched or restyled right away.
+            if !tool.isFreehand { selectedID = a.id }
+        case .moving(let id, _, let tapEditsText):
+            if wasTap, tapEditsText { beginEditingText(id) }
+        case .pendingTap:
+            let at = clampToBounds(gestureStart)
+            if tool == .text {
+                pushUndo(clearsRedo: false) // provisional: an abandoned empty box leaves redo alone
+                var a = Annotation(kind: .text)
+                a.color = color
+                a.fontSize = fontSizePx
+                a.textStyle = textStyle
+                a.start = CGPoint(x: at.x, y: max(interactionBounds.minY, at.y - a.fontSize * 0.7))
                 annotations.append(a)
-            } else if pushedUndoThisGesture {
-                _ = undoStack.popLast()
+                beginEditingText(a.id, isNew: true)
+            } else if tool == .badge {
+                pushUndo()
+                var a = Annotation(kind: .badge)
+                a.color = color
+                a.lineWidth = lineWidthPx
+                a.badgeNumber = badgeCounter
+                a.start = at
+                badgeCounter += 1
+                annotations.append(a)
+                selectedID = a.id
             }
+        case .croppingNew:
+            if wasTap { cropRect = nil }
+        case .resizing, .movingCrop, .resizingCrop, .none:
+            break
         }
+    }
+
+    /// Ends whatever gesture is in flight (e.g. the window lost focus mid-drag).
+    func cancelGesture() {
+        if case .drawing = gestureMode { draft = nil }
+        gestureMode = .none
     }
 
     private func pushUndoOnce() {
@@ -425,63 +575,52 @@ final class EditorState: ObservableObject {
     }
 
     private func constrained(from start: CGPoint, to p: CGPoint, kind: Annotation.Kind) -> CGPoint {
-        let dx = p.x - start.x, dy = p.y - start.y
         switch kind {
         case .line, .arrow:
-            // Snap to 45° increments.
-            let angle = atan2(dy, dx)
-            let snapped = (angle / (.pi / 4)).rounded() * (.pi / 4)
-            let len = hypot(dx, dy)
-            return CGPoint(x: start.x + cos(snapped) * len, y: start.y + sin(snapped) * len)
+            return Annotation.snap45(from: start, to: p)
         default:
             // Square / circle.
+            let dx = p.x - start.x, dy = p.y - start.y
             let side = max(abs(dx), abs(dy))
             return CGPoint(x: start.x + (dx < 0 ? -side : side), y: start.y + (dy < 0 ? -side : side))
         }
     }
 
+    private var imageRect: CGRect { CGRect(origin: .zero, size: pixelSize) }
+
     private func clampToImage(_ p: CGPoint) -> CGPoint {
         CGPoint(x: min(max(0, p.x), pixelSize.width), y: min(max(0, p.y), pixelSize.height))
     }
 
-    // MARK: Hit testing
-
-    /// Tolerance in image pixels that corresponds to ~7 screen points at the current zoom.
-    private var hitTolerancePx: CGFloat { 7 * scale / max(zoom, 0.2) }
-
-    func hitTest(_ p: CGPoint) -> UUID? {
-        // Pass 1: precise (strokes, outlines, glyph boxes) — topmost first.
-        for a in annotations.reversed() where a.hits(p, tolerance: hitTolerancePx) {
-            return a.id
-        }
-        // Pass 2: inside closed shapes.
-        for a in annotations.reversed() where a.hitsLoosely(p) {
-            return a.id
-        }
-        return nil
+    private func clampToBounds(_ p: CGPoint) -> CGPoint {
+        let b = interactionBounds
+        return CGPoint(x: min(max(b.minX, p.x), b.maxX), y: min(max(b.minY, p.y), b.maxY))
     }
 
-    func handleAt(_ p: CGPoint, for a: Annotation) -> ShapeHandle? {
-        let tolerance = 12 * scale / max(zoom, 0.2)
-        func near(_ q: CGPoint) -> Bool { hypot(p.x - q.x, p.y - q.y) <= tolerance }
-        switch a.kind {
-        case .line, .arrow:
-            if near(a.start) { return .start }
-            if near(a.end) { return .end }
-        case .rect, .ellipse:
-            let r = a.shapeRect
-            if near(CGPoint(x: r.minX, y: r.minY)) { return .cornerTL }
-            if near(CGPoint(x: r.maxX, y: r.minY)) { return .cornerTR }
-            if near(CGPoint(x: r.minX, y: r.maxY)) { return .cornerBL }
-            if near(CGPoint(x: r.maxX, y: r.maxY)) { return .cornerBR }
-        case .text:
-            let r = a.textBox
-            if near(CGPoint(x: r.maxX, y: r.maxY)) { return .cornerBR }
-            if near(CGPoint(x: r.minX, y: r.minY)) { return .cornerTL }
-            if near(CGPoint(x: r.maxX, y: r.minY)) { return .cornerTR }
-            if near(CGPoint(x: r.minX, y: r.maxY)) { return .cornerBL }
-        default:
-            break
+    /// Limits a move so a sliver of the annotation always stays inside the work area.
+    private func clampedDelta(_ d: CGPoint, for frame: CGRect) -> CGPoint {
+        let b = interactionBounds
+        let keep = min(pixels(forViewPoints: 16), b.width / 2, b.height / 2)
+        var dx = d.x, dy = d.y
+        if frame.maxX + dx < b.minX + keep { dx = b.minX + keep - frame.maxX }
+        if frame.minX + dx > b.maxX - keep { dx = b.maxX - keep - frame.minX }
+        if frame.maxY + dy < b.minY + keep { dy = b.minY + keep - frame.maxY }
+        if frame.minY + dy > b.maxY - keep { dy = b.maxY - keep - frame.minY }
+        return CGPoint(x: dx, y: dy)
+    }
+
+    // MARK: Hit testing
+
+    /// Topmost annotation under `p`. Strokes, outlines and glyph boxes are hit precisely; `loose`
+    /// also accepts the inside of closed shapes (for the select tool).
+    func hitTest(_ p: CGPoint, loose: Bool = true) -> UUID? {
+        for a in annotations.reversed() where a.id != editingTextID && a.hits(p, tolerance: hitTolerance) {
+            return a.id
+        }
+        if loose {
+            for a in annotations.reversed() where a.hitsLoosely(p) {
+                return a.id
+            }
         }
         return nil
     }
@@ -489,35 +628,62 @@ final class EditorState: ObservableObject {
     // MARK: Editing operations
 
     func deleteSelected() {
-        guard let id = selectedID, let idx = annotations.firstIndex(where: { $0.id == id }) else { return }
+        guard let id = selectedID, let idx = index(of: id) else { return }
         pushUndo()
         let removed = annotations.remove(at: idx)
         selectedID = nil
         if removed.kind == .badge { renumberBadges() }
     }
 
+    func duplicateSelected() {
+        guard let a = selected else { return }
+        pushUndo()
+        var copy = a
+        copy.id = UUID()
+        let offset = pixels(forViewPoints: 14)
+        copy.translate(by: clampedDelta(CGPoint(x: offset, y: offset), for: a.frame))
+        if copy.kind == .badge {
+            copy.badgeNumber = badgeCounter
+            badgeCounter += 1
+        }
+        annotations.append(copy)
+        selectedID = copy.id
+    }
+
+    func bringSelectedToFront() {
+        guard let id = selectedID, let idx = index(of: id), idx != annotations.count - 1 else { return }
+        pushUndo()
+        annotations.append(annotations.remove(at: idx))
+    }
+
+    func sendSelectedToBack() {
+        guard let id = selectedID, let idx = index(of: id), idx != 0 else { return }
+        pushUndo()
+        annotations.insert(annotations.remove(at: idx), at: 0)
+    }
+
+    func removeAllAnnotations() {
+        commitTextEditing()
+        guard !annotations.isEmpty else { return }
+        pushUndo()
+        annotations.removeAll()
+        selectedID = nil
+        badgeCounter = 1
+    }
+
     /// Keeps step badges sequential (1, 2, 3 …) after one is removed.
     private func renumberBadges() {
-        var n = 1
-        for i in annotations.indices where annotations[i].kind == .badge {
-            annotations[i].badgeNumber = n
-            n += 1
-        }
-        badgeCounter = n
+        let order = annotations.indices.filter { annotations[$0].kind == .badge }
+            .sorted { annotations[$0].badgeNumber < annotations[$1].badgeNumber }
+        for (n, i) in order.enumerated() { annotations[i].badgeNumber = n + 1 }
+        badgeCounter = order.count + 1
     }
 
+    /// Arrow-key nudge; a burst of presses is one undo step.
     func nudgeSelected(dx: CGFloat, dy: CGFloat) {
-        guard let id = selectedID, let idx = annotations.firstIndex(where: { $0.id == id }) else { return }
-        annotations[idx].translate(by: CGPoint(x: dx, y: dy))
-    }
-
-    func commitTextEditing() {
-        guard let id = editingTextID else { return }
-        editingTextID = nil
-        if let idx = annotations.firstIndex(where: { $0.id == id }),
-           annotations[idx].text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            annotations.remove(at: idx)
-        }
+        guard let id = selectedID, let idx = index(of: id) else { return }
+        pushUndoForBurst("nudge", within: 1.0)
+        annotations[idx].translate(by: clampedDelta(CGPoint(x: dx, y: dy), for: annotations[idx].frame))
     }
 
     func applyCrop() {
@@ -537,26 +703,108 @@ final class EditorState: ObservableObject {
 
     // MARK: Export
 
-    func flatten() -> CGImage {
+    /// Base + annotations as one image. `crop` (pixels) limits the result; the capture overlay
+    /// renders only the selected part of its full-screen base.
+    func flatten(cropTo crop: CGRect? = nil) -> CGImage {
         commitTextEditing()
-        let w = base.width, h = base.height
-        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
-        else { return base }
-        ctx.interpolationQuality = .high
-        ctx.draw(base, in: CGRect(x: 0, y: 0, width: w, height: h))
-        ctx.translateBy(x: 0, y: CGFloat(h))
-        ctx.scaleBy(x: 1, y: -1)
-        if annotations.contains(where: { $0.kind == .mosaic }) {
-            filters.prepare(for: base)
-        }
-        AnnotationRenderer.render(annotations, in: ctx, imageSize: pixelSize,
-                                  pixelated: filters.pixelated, blurred: filters.blurred)
-        return ctx.makeImage() ?? base
+        return AnnotationRenderer.flatten(base: base, scale: scale, annotations: annotations,
+                                          crop: crop, filters: filters)
     }
 
     func flattenedCapture() -> CapturedImage {
         CapturedImage(cgImage: flatten(), scale: scale)
+    }
+
+    /// The annotations moved into the coordinate space of `region` (for handing a cropped
+    /// overlay session to the full editor).
+    func annotations(relativeTo region: CGRect) -> [Annotation] {
+        commitTextEditing()
+        return annotations.map { a in
+            var b = a
+            b.translate(by: CGPoint(x: -region.minX, y: -region.minY))
+            return b
+        }
+    }
+
+    // MARK: Keyboard (shared by the editor window and the capture overlay)
+
+    /// Physical key codes, so shortcuts work under any keyboard layout or IME
+    /// (with 注音/拼音 active, `characters` returns Zhuyin/Pinyin glyphs instead of letters).
+    enum Key {
+        static let a: UInt16 = 0, s: UInt16 = 1, d: UInt16 = 2, h: UInt16 = 4, z: UInt16 = 6, c: UInt16 = 8, v: UInt16 = 9
+        static let b: UInt16 = 11, w: UInt16 = 13, e: UInt16 = 14, r: UInt16 = 15, t: UInt16 = 17
+        static let u: UInt16 = 32, i: UInt16 = 34, p: UInt16 = 35, l: UInt16 = 37, m: UInt16 = 46
+        static let equal: UInt16 = 24, nine: UInt16 = 25, minus: UInt16 = 27, zero: UInt16 = 29
+        static let leftBracket: UInt16 = 33, rightBracket: UInt16 = 30
+        static let ret: UInt16 = 36, enter: UInt16 = 76, esc: UInt16 = 53, space: UInt16 = 49
+        static let delete: UInt16 = 51, fwdDelete: UInt16 = 117
+        static let left: UInt16 = 123, right: UInt16 = 124, down: UInt16 = 125, up: UInt16 = 126
+    }
+
+    static let toolKeys: [UInt16: Tool] = [
+        Key.v: .select, Key.p: .pen, Key.h: .highlighter, Key.l: .line, Key.a: .arrow,
+        Key.r: .rect, Key.e: .ellipse, Key.t: .text, Key.m: .mosaic, Key.b: .badge, Key.c: .crop,
+    ]
+
+    static func cleanFlags(_ event: NSEvent) -> NSEvent.ModifierFlags {
+        // Arrow keys carry .function/.numericPad; strip them so "shift + arrow" compares cleanly.
+        event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.function, .numericPad, .capsLock])
+    }
+
+    /// Annotation shortcuts common to every surface: undo/redo, delete, nudge, duplicate,
+    /// stacking order, and text styling. Returns true when the key was used.
+    func handleAnnotationKey(code: UInt16, flags: NSEvent.ModifierFlags) -> Bool {
+        if inspectedIsText, handleTextStyleShortcut(code: code, flags: flags) { return true }
+        if flags == [.command] {
+            switch code {
+            case Key.z: undo(); return true
+            case Key.d where selectedID != nil: duplicateSelected(); return true
+            case Key.rightBracket where selectedID != nil: bringSelectedToFront(); return true
+            case Key.leftBracket where selectedID != nil: sendSelectedToBack(); return true
+            default: break
+            }
+        }
+        if flags == [.command, .shift], code == Key.z { redo(); return true }
+        if flags.isEmpty || flags == [.shift] {
+            switch code {
+            case Key.delete, Key.fwdDelete:
+                guard selectedID != nil else { return false }
+                deleteSelected()
+                return true
+            case Key.left, Key.right, Key.down, Key.up:
+                guard selectedID != nil else { return false }
+                let step: CGFloat = (flags == [.shift] ? 10 : 1) * scale
+                switch code {
+                case Key.left: nudgeSelected(dx: -step, dy: 0)
+                case Key.right: nudgeSelected(dx: step, dy: 0)
+                case Key.down: nudgeSelected(dx: 0, dy: step)
+                default: nudgeSelected(dx: 0, dy: -step)
+                }
+                return true
+            default:
+                break
+            }
+        }
+        return false
+    }
+
+    /// ⌘B bold · ⌘I italic · ⌘U underline · ⌥⌘↑/↓ font size (for the selected or edited text).
+    func handleTextStyleShortcut(code: UInt16, flags: NSEvent.ModifierFlags) -> Bool {
+        if flags == [.command] {
+            switch code {
+            case Key.b: textStyle.bold.toggle(); return true
+            case Key.i: textStyle.italic.toggle(); return true
+            case Key.u: textStyle.underline.toggle(); return true
+            default: return false
+            }
+        }
+        if flags == [.command, .option] {
+            switch code {
+            case Key.up: adjustFontSize(by: 2); return true
+            case Key.down: adjustFontSize(by: -2); return true
+            default: return false
+            }
+        }
+        return false
     }
 }

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct EditorActions {
+    var done: () -> Void
     var save: () -> Void
     var saveAs: () -> Void
     var copy: () -> Void
@@ -23,6 +24,8 @@ struct EditorRootView: View {
     var body: some View {
         VStack(spacing: 0) {
             EditorTopBar(state: state, actions: actions)
+            Divider().opacity(0.4)
+            EditorStyleRow(state: state)
             if state.tool == .text || state.inspectedIsText {
                 Divider().opacity(0.4)
                 TextFormatBar(state: state)
@@ -44,8 +47,6 @@ struct EditorTopBar: View {
     @ObservedObject var state: EditorState
     let actions: EditorActions
 
-    @State private var showColorPopover = false
-    @State private var showWidthPopover = false
     @State private var showOCRPopover = false
     @State private var ocrText: String?
     @State private var ocrRunning = false
@@ -64,40 +65,6 @@ struct EditorTopBar: View {
 
             Divider().frame(height: 20)
 
-            // Color swatch.
-            Button { showColorPopover.toggle() } label: {
-                Circle()
-                    .fill(state.color.color)
-                    .frame(width: 18, height: 18)
-                    .overlay(Circle().strokeBorder(.primary.opacity(0.25), lineWidth: 1))
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(L("editor.color"))
-            .popover(isPresented: $showColorPopover, arrowEdge: .bottom) { ColorPopover(state: state) }
-
-            // Stroke width / font size.
-            Button { showWidthPopover.toggle() } label: {
-                Image(systemName: "lineweight")
-                    .font(.system(size: 13, weight: .medium))
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(L("editor.size"))
-            .popover(isPresented: $showWidthPopover, arrowEdge: .bottom) { SizePopover(state: state) }
-
-            if state.tool == .mosaic {
-                Picker("", selection: $state.mosaicBlur) {
-                    Text(L("editor.pixelate")).tag(false)
-                    Text(L("editor.blur")).tag(true)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 140)
-            }
-
             if state.tool == .crop {
                 Button(L("editor.apply_crop")) { state.applyCrop() }
                     .buttonStyle(.borderedProminent)
@@ -113,8 +80,7 @@ struct EditorTopBar: View {
 
             Divider().frame(height: 20)
 
-            IconButton(symbol: "arrow.uturn.backward", help: L("editor.undo"), disabled: !state.canUndo) { state.undo() }
-            IconButton(symbol: "arrow.uturn.forward", help: L("editor.redo"), disabled: !state.canRedo) { state.redo() }
+            HistoryButtons(state: state)
 
             Spacer(minLength: 8)
 
@@ -141,22 +107,22 @@ struct EditorTopBar: View {
             secondaryButton("pin", L("editor.pin"), help: L("editor.pin_help"), action: actions.pin)
             secondaryButton("doc.on.doc", L("editor.copy"), help: L("editor.copy_help") + "  ⌘C", action: actions.copy)
 
-            // Save (primary) + overflow menu sharing one pill.
+            // Save + overflow menu sharing one pill.
             HStack(spacing: 0) {
                 Button(action: actions.save) {
                     HStack(spacing: 5) {
                         Image(systemName: "square.and.arrow.down").font(.system(size: 12, weight: .semibold))
-                        Text(L("editor.save")).font(.system(size: 12, weight: .semibold)).fixedSize()
+                        Text(L("editor.save")).font(.system(size: 12, weight: .medium)).fixedSize()
                     }
-                    .padding(.leading, 12)
-                    .padding(.trailing, 8)
+                    .padding(.leading, 10)
+                    .padding(.trailing, 7)
                     .frame(height: 27)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(L("editor.save_help") + "  ⌘S")
 
-                Rectangle().fill(.white.opacity(0.35)).frame(width: 1, height: 15)
+                Rectangle().fill(Color.primary.opacity(0.15)).frame(width: 1, height: 15)
 
                 Menu {
                     Button(L("editor.save_as") + "…") { actions.saveAs() }
@@ -172,9 +138,23 @@ struct EditorTopBar: View {
                 .frame(width: 22, height: 27)
                 .help(L("editor.more"))
             }
-            .foregroundStyle(.white)
-            .background(accentGradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .shadow(color: Color(nsColor: Brand.accent).opacity(0.35), radius: 6, y: 2)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            // Done: the one primary action — copy, save, close.
+            Button(action: actions.done) {
+                HStack(spacing: 5) {
+                    Image(systemName: "checkmark").font(.system(size: 12, weight: .bold))
+                    Text(L("editor.done")).font(.system(size: 12, weight: .semibold)).fixedSize()
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 27)
+                .foregroundStyle(.white)
+                .background(accentGradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .shadow(color: Color(nsColor: Brand.accent).opacity(0.35), radius: 6, y: 2)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(L("editor.done_help") + "  ⌘↩")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -262,64 +242,42 @@ struct IconButton: View {
     }
 }
 
-struct ColorPopover: View {
+/// Undo / redo buttons; observes the history so they enable as soon as there is something to undo.
+struct HistoryButtons: View {
     @ObservedObject var state: EditorState
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 8) {
-                ForEach(Array(RGBA.presets.enumerated()), id: \.offset) { _, preset in
-                    Button { state.color = preset } label: {
-                        Circle()
-                            .fill(preset.color)
-                            .frame(width: 22, height: 22)
-                            .overlay(Circle().strokeBorder(.primary.opacity(0.25), lineWidth: 1))
-                            .overlay {
-                                if state.color == preset {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundStyle(preset.r + preset.g + preset.b > 2 ? .black : .white)
-                                }
-                            }
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            ColorPicker(L("editor.custom_color"), selection: Binding(
-                get: { state.color.color },
-                set: { newValue in
-                    let ns = NSColor(newValue).usingColorSpace(.sRGB) ?? .black
-                    state.color = RGBA(r: ns.redComponent, g: ns.greenComponent, b: ns.blueComponent, a: 1)
-                }
-            ))
-            .font(.system(size: 12))
+        HStack(spacing: 4) {
+            IconButton(symbol: "arrow.uturn.backward", help: L("editor.undo"), disabled: !state.canUndo) { state.undo() }
+            IconButton(symbol: "arrow.uturn.forward", help: L("editor.redo"), disabled: !state.canRedo) { state.redo() }
         }
-        .padding(12)
     }
 }
 
-struct SizePopover: View {
+/// Second toolbar row: colors, sizes, mosaic mode and selection actions.
+struct EditorStyleRow: View {
     @ObservedObject var state: EditorState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if state.tool == .text {
-                Text(L("editor.font_size") + ": \(Int(state.fontSizePt)) pt").font(.system(size: 11))
-                Slider(value: $state.fontSizePt, in: 10...72, step: 1).frame(width: 180)
-                Text("Aa 文字")
-                    .font(.system(size: min(36, state.fontSizePt), weight: .semibold))
-                    .foregroundStyle(state.color.color)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-            } else {
-                Text(L("editor.stroke_width") + ": \(Int(state.lineWidthPt)) pt").font(.system(size: 11))
-                Slider(value: $state.lineWidthPt, in: 1...14, step: 1).frame(width: 180)
-                Circle()
-                    .fill(state.color.color)
-                    .frame(width: max(3, state.lineWidthPt * 2), height: max(3, state.lineWidthPt * 2))
-                    .frame(maxWidth: .infinity, minHeight: 36)
+        HStack(spacing: 10) {
+            AnnotationStyleBar(state: state)
+            Spacer(minLength: 0)
+            if !state.annotations.isEmpty {
+                Button {
+                    state.removeAllAnnotations()
+                } label: {
+                    Label(L("editor.clear_all"), systemImage: "eraser")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help(L("editor.clear_all_help"))
             }
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .frame(minHeight: 34)
+        .background(.bar)
     }
 }
 
@@ -353,29 +311,20 @@ struct OCRResultView: View {
 
 struct EditorCanvasArea: View {
     @ObservedObject var state: EditorState
-    @FocusState private var textFieldFocused: Bool
-    @State private var gestureActive = false
-    @State private var magnifyBase: CGFloat?
-
-    private var pxToView: CGFloat { state.pxToView }
 
     var body: some View {
         GeometryReader { geo in
             ScrollView([.horizontal, .vertical]) {
-                ZStack(alignment: .topLeading) {
-                    canvas
-                    textEditingOverlay
-                }
-                .coordinateSpace(name: "canvas")
-                .frame(width: max(1, state.displaySize.width), height: max(1, state.displaySize.height))
-                .background(
-                    Rectangle()
-                        .fill(Color.white)
-                        .shadow(color: .black.opacity(0.22), radius: 14, y: 6)
-                )
-                // Centered with breathing room; grows the scrollable area when zoomed in.
-                .frame(width: max(state.displaySize.width + 48, geo.size.width),
-                       height: max(state.displaySize.height + 48, geo.size.height))
+                AnnotationCanvasRepresentable(state: state)
+                    .frame(width: max(1, state.displaySize.width), height: max(1, state.displaySize.height))
+                    .background(
+                        Rectangle()
+                            .fill(Color.white)
+                            .shadow(color: .black.opacity(0.22), radius: 14, y: 6)
+                    )
+                    // Centered with breathing room; grows the scrollable area when zoomed in.
+                    .frame(width: max(state.displaySize.width + 48, geo.size.width),
+                           height: max(state.displaySize.height + 48, geo.size.height))
             }
             .background(CheckerboardBackground())
             .onAppear {
@@ -387,201 +336,6 @@ struct EditorCanvasArea: View {
             }
         }
     }
-
-    private var canvas: some View {
-        Canvas(rendersAsynchronously: false) { gc, _ in
-            gc.withCGContext { cg in
-                cg.saveGState()
-                cg.scaleBy(x: pxToView, y: pxToView)
-                cg.interpolationQuality = pxToView >= 1 ? .none : .high
-                AnnotationRenderer.drawImageInFlippedContext(
-                    state.base, rect: CGRect(origin: .zero, size: state.pixelSize), in: cg)
-                if state.annotations.contains(where: { $0.kind == .mosaic }) || state.draft?.kind == .mosaic {
-                    state.filters.prepare(for: state.base)
-                }
-                var toDraw = state.annotations
-                if let d = state.draft { toDraw.append(d) }
-                if let editing = state.editingTextID {
-                    toDraw.removeAll { $0.id == editing } // the TextField shows this one
-                }
-                AnnotationRenderer.render(toDraw, in: cg, imageSize: state.pixelSize,
-                                          pixelated: state.filters.pixelated, blurred: state.filters.blurred)
-                cg.restoreGState()
-            }
-            drawSelectionChrome(gc)
-            drawCropChrome(gc)
-        }
-        .frame(width: max(state.displaySize.width, 1), height: max(state.displaySize.height, 1))
-        .gesture(dragGesture)
-        .simultaneousGesture(doubleTapGesture)
-        .simultaneousGesture(magnifyGesture)
-    }
-
-    private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .local)
-            .onChanged { value in
-                if !gestureActive {
-                    gestureActive = true
-                    state.gestureBegan(at: pixelPoint(value.startLocation))
-                }
-                state.gestureChanged(to: pixelPoint(value.location),
-                                     shiftDown: NSEvent.modifierFlags.contains(.shift))
-            }
-            .onEnded { value in
-                if !gestureActive { // a plain click can end without any .onChanged
-                    state.gestureBegan(at: pixelPoint(value.startLocation))
-                }
-                gestureActive = false
-                state.gestureEnded(at: pixelPoint(value.location))
-            }
-    }
-
-    private var doubleTapGesture: some Gesture {
-        SpatialTapGesture(count: 2, coordinateSpace: .local)
-            .onEnded { value in
-                guard state.tool == .select else { return }
-                let p = pixelPoint(value.location)
-                if let id = state.hitTest(p),
-                   let a = state.annotations.first(where: { $0.id == id }), a.kind == .text {
-                    state.selectedID = nil
-                    state.editingTextID = id
-                }
-            }
-    }
-
-    private var magnifyGesture: some Gesture {
-        MagnificationGesture()
-            .onChanged { value in
-                if magnifyBase == nil { magnifyBase = state.zoom }
-                state.setZoom((magnifyBase ?? state.zoom) * value)
-            }
-            .onEnded { _ in magnifyBase = nil }
-    }
-
-    private func pixelPoint(_ viewPoint: CGPoint) -> CGPoint {
-        CGPoint(x: viewPoint.x / pxToView, y: viewPoint.y / pxToView)
-    }
-
-    // Selection dashed bounds + handles (view coordinates → constant on-screen size).
-    private func drawSelectionChrome(_ gc: GraphicsContext) {
-        guard state.tool == .select, let id = state.selectedID,
-              let a = state.annotations.first(where: { $0.id == id }) else { return }
-        let b = a.bounds
-        let viewRect = CGRect(x: b.minX * pxToView, y: b.minY * pxToView,
-                              width: b.width * pxToView, height: b.height * pxToView)
-        let path = Path(viewRect)
-        gc.stroke(path, with: .color(.white), style: StrokeStyle(lineWidth: 1.5))
-        gc.stroke(path, with: .color(Color(nsColor: Brand.accent)), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-
-        var handlePts: [CGPoint] = []
-        switch a.kind {
-        case .line, .arrow:
-            handlePts = [a.start, a.end]
-        case .rect, .ellipse:
-            let r = a.shapeRect
-            handlePts = [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY),
-                         CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.maxX, y: r.maxY)]
-        case .text:
-            let r = a.textBox
-            handlePts = [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY),
-                         CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.maxX, y: r.maxY)]
-        default:
-            break
-        }
-        for pt in handlePts {
-            let v = CGPoint(x: pt.x * pxToView, y: pt.y * pxToView)
-            let rect = CGRect(x: v.x - 4.5, y: v.y - 4.5, width: 9, height: 9)
-            gc.fill(Path(ellipseIn: rect), with: .color(.white))
-            gc.stroke(Path(ellipseIn: rect), with: .color(Color(nsColor: Brand.accent)), style: StrokeStyle(lineWidth: 1.5))
-        }
-    }
-
-    private func drawCropChrome(_ gc: GraphicsContext) {
-        guard state.tool == .crop, let crop = state.cropRect, crop.width > 0, crop.height > 0 else { return }
-        let v = CGRect(x: crop.minX * pxToView, y: crop.minY * pxToView,
-                       width: crop.width * pxToView, height: crop.height * pxToView)
-        var dim = Path()
-        dim.addRect(CGRect(origin: .zero, size: state.displaySize))
-        dim.addRect(v)
-        gc.fill(dim, with: .color(.black.opacity(0.5)), style: FillStyle(eoFill: true))
-        gc.stroke(Path(v), with: .color(.white), style: StrokeStyle(lineWidth: 1.5))
-        var guides = Path()
-        for i in 1...2 {
-            let x = v.minX + v.width * CGFloat(i) / 3
-            let y = v.minY + v.height * CGFloat(i) / 3
-            guides.move(to: CGPoint(x: x, y: v.minY)); guides.addLine(to: CGPoint(x: x, y: v.maxY))
-            guides.move(to: CGPoint(x: v.minX, y: y)); guides.addLine(to: CGPoint(x: v.maxX, y: y))
-        }
-        gc.stroke(guides, with: .color(.white.opacity(0.35)), style: StrokeStyle(lineWidth: 0.5))
-        let label = Text("\(Int(crop.width)) × \(Int(crop.height))")
-            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-            .foregroundColor(.white)
-        gc.draw(label, at: CGPoint(x: v.midX, y: max(10, v.minY - 12)))
-    }
-
-    // Live text editor for the annotation being edited, with a move grip and a resize handle.
-    @ViewBuilder
-    private var textEditingOverlay: some View {
-        if let id = state.editingTextID, let a = state.annotations.first(where: { $0.id == id }) {
-            let box = a.textBox
-            let viewBox = CGRect(x: box.minX * pxToView, y: box.minY * pxToView,
-                                 width: box.width * pxToView, height: box.height * pxToView)
-
-            // Plate preview + dashed outline so the box is visible while typing.
-            RoundedRectangle(cornerRadius: a.textPadding * pxToView, style: .continuous)
-                .fill(a.textStyle.plate ? Color(nsColor: a.plateColor) : Color.black.opacity(0.06))
-                .overlay(RoundedRectangle(cornerRadius: a.textPadding * pxToView, style: .continuous)
-                    .strokeBorder(Color(nsColor: Brand.accent), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
-                .frame(width: max(24, viewBox.width), height: max(12, viewBox.height))
-                .offset(x: viewBox.minX, y: viewBox.minY)
-                .allowsHitTesting(false)
-
-            AnnotationTextEditor(state: state, annotation: a, pxToView: pxToView)
-                .fixedSize()
-                .offset(x: viewBox.minX, y: viewBox.minY)
-
-            // Move grip (left of the box).
-            Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 20, height: 20)
-                .background(Color(nsColor: Brand.accent), in: Circle())
-                .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
-                .offset(x: viewBox.minX - 24, y: viewBox.minY - 2)
-                .help(L("text.grip_help"))
-                .gesture(
-                    DragGesture(minimumDistance: 1, coordinateSpace: .named("canvas"))
-                        .onChanged { value in
-                            let last = gripLast ?? value.startLocation
-                            let delta = CGPoint(x: (value.location.x - last.x) / pxToView,
-                                                y: (value.location.y - last.y) / pxToView)
-                            state.moveText(id: id, by: delta, begin: gripLast == nil)
-                            gripLast = value.location
-                        }
-                        .onEnded { _ in gripLast = nil }
-                )
-
-            // Resize handle (bottom-right corner) scales the font.
-            Circle()
-                .fill(.white)
-                .overlay(Circle().strokeBorder(Color(nsColor: Brand.accent), lineWidth: 2))
-                .frame(width: 12, height: 12)
-                .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
-                .offset(x: viewBox.maxX - 6, y: viewBox.maxY - 6)
-                .help(L("text.scale_help"))
-                .gesture(
-                    DragGesture(minimumDistance: 1, coordinateSpace: .named("canvas"))
-                        .onChanged { value in
-                            state.scaleText(id: id, handle: .cornerBR, to: pixelPoint(value.location), begin: !scaling)
-                            scaling = true
-                        }
-                        .onEnded { _ in scaling = false }
-                )
-        }
-    }
-
-    @State private var gripLast: CGPoint?
-    @State private var scaling = false
 }
 
 struct CheckerboardBackground: View {
@@ -885,133 +639,5 @@ struct FontPickerPopover: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-    }
-}
-
-// MARK: - In-place text editor (AppKit, so IME, alignment and newlines behave natively)
-
-struct AnnotationTextEditor: NSViewRepresentable {
-    let state: EditorState
-    let annotation: Annotation
-    let pxToView: CGFloat
-
-    func makeCoordinator() -> Coordinator { Coordinator(state: state, id: annotation.id) }
-
-    func makeNSView(context: Context) -> EditingTextView {
-        let tv = EditingTextView()
-        tv.delegate = context.coordinator
-        tv.isRichText = false
-        tv.drawsBackground = false
-        tv.isFieldEditor = false
-        tv.allowsUndo = true
-        tv.isAutomaticQuoteSubstitutionEnabled = false
-        tv.isAutomaticDashSubstitutionEnabled = false
-        tv.isAutomaticTextReplacementEnabled = false
-        tv.isAutomaticSpellingCorrectionEnabled = false
-        tv.isContinuousSpellCheckingEnabled = false
-        tv.textContainer?.widthTracksTextView = false
-        tv.textContainer?.lineFragmentPadding = 0
-        tv.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        tv.isHorizontallyResizable = true
-        tv.isVerticallyResizable = true
-        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        tv.string = annotation.text
-        apply(to: tv)
-        DispatchQueue.main.async {
-            tv.window?.makeFirstResponder(tv)
-            tv.setSelectedRange(NSRange(location: (tv.string as NSString).length, length: 0))
-        }
-        return tv
-    }
-
-    func updateNSView(_ tv: EditingTextView, context: Context) {
-        context.coordinator.id = annotation.id
-        if tv.string != annotation.text, !tv.hasMarkedText() {
-            tv.string = annotation.text
-        }
-        apply(to: tv)
-    }
-
-    private func apply(to tv: EditingTextView) {
-        let resolved = annotation.textStyle.resolvedFont(size: max(4, annotation.fontSize * pxToView))
-        let font = resolved.font
-        let color = annotation.color.nsColor
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = annotation.textStyle.alignment.ns
-        var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
-        if resolved.syntheticItalic { attrs[.obliqueness] = 0.22 }
-        if annotation.textStyle.underline { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-        if annotation.textStyle.strikethrough { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
-        let pad = annotation.textPadding * pxToView
-        tv.textContainerInset = NSSize(width: pad, height: pad)
-        tv.font = font
-        tv.textColor = color
-        tv.alignment = annotation.textStyle.alignment.ns
-        tv.insertionPointColor = color
-        tv.typingAttributes = attrs
-        if let storage = tv.textStorage, storage.length > 0, !tv.hasMarkedText() {
-            storage.setAttributes(attrs, range: NSRange(location: 0, length: storage.length))
-        }
-        tv.fitContainerToContent()
-        tv.invalidateIntrinsicContentSize()
-    }
-
-    final class Coordinator: NSObject, NSTextViewDelegate {
-        let state: EditorState
-        var id: UUID
-        init(state: EditorState, id: UUID) { self.state = state; self.id = id }
-
-        func textDidChange(_ notification: Notification) {
-            guard let tv = notification.object as? NSTextView else { return }
-            state.updateText(id: id, tv.string)
-            tv.invalidateIntrinsicContentSize()
-        }
-
-        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-            switch commandSelector {
-            case #selector(NSResponder.insertNewline(_:)):
-                let mods = NSApp.currentEvent?.modifierFlags ?? []
-                if mods.contains(.shift) || mods.contains(.option) {
-                    textView.insertText("\n", replacementRange: textView.selectedRange())
-                } else {
-                    state.commitTextEditing()
-                }
-                return true
-            case #selector(NSResponder.cancelOperation(_:)):
-                state.commitTextEditing()
-                return true
-            default:
-                return false
-            }
-        }
-    }
-}
-
-final class EditingTextView: NSTextView {
-    override var acceptsFirstResponder: Bool { true }
-
-    /// Sizes the container to the longest line so paragraph alignment shows while typing
-    /// (an unbounded container would make every line look left-aligned).
-    func fitContainerToContent() {
-        guard let lm = layoutManager, let tc = textContainer else { return }
-        tc.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        lm.ensureLayout(for: tc)
-        let natural = lm.usedRect(for: tc).width
-        tc.containerSize = NSSize(width: max(24, ceil(natural) + 2), height: CGFloat.greatestFiniteMagnitude)
-        lm.ensureLayout(for: tc)
-    }
-
-    override var intrinsicContentSize: NSSize {
-        guard let lm = layoutManager, let tc = textContainer else { return super.intrinsicContentSize }
-        lm.ensureLayout(for: tc)
-        let used = lm.usedRect(for: tc).size
-        return NSSize(width: max(24, ceil(tc.containerSize.width)) + textContainerInset.width * 2,
-                      height: max(ceil(used.height), (font?.pointSize ?? 12) * 1.3) + textContainerInset.height * 2)
-    }
-
-    override func didChangeText() {
-        super.didChangeText()
-        fitContainerToContent()
-        invalidateIntrinsicContentSize()
     }
 }

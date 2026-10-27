@@ -8,10 +8,15 @@ import UniformTypeIdentifiers
 final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private static var openControllers: [EditorWindowController] = []
 
-    /// The editor the user is working in (key window), used by main-menu actions.
+    /// The editor the user is working in, used by main-menu actions. Nil while some other window
+    /// (the capture overlay, preferences…) has the keyboard, so a menu shortcut never edits a
+    /// background editor by surprise.
     static var frontmost: EditorWindowController? {
-        if let c = NSApp.keyWindow?.windowController as? EditorWindowController { return c }
-        return openControllers.last
+        guard let key = NSApp.keyWindow else { return openControllers.last }
+        if let c = key.windowController as? EditorWindowController { return c }
+        // A popover (font list, OCR result) opened from an editor.
+        if let c = key.parent?.windowController as? EditorWindowController { return c }
+        return nil
     }
 
     let state: EditorState
@@ -20,9 +25,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private var changeObserver: AnyCancellable?
     private var closeConfirmed = false
 
+    /// Opens an editor. `annotations` arrive live (still movable) — from the capture overlay, or
+    /// restored from a file SnapMark saved earlier.
     @discardableResult
-    static func open(image: CapturedImage, savedURL: URL?) -> EditorWindowController {
-        let controller = EditorWindowController(image: image, savedURL: savedURL)
+    static func open(image: CapturedImage, savedURL: URL?, annotations: [Annotation] = [],
+                     badgeCounter: Int? = nil, annotationsAreSaved: Bool = true) -> EditorWindowController {
+        let controller = EditorWindowController(image: image, savedURL: savedURL, annotations: annotations,
+                                                badgeCounter: badgeCounter, annotationsAreSaved: annotationsAreSaved)
         openControllers.append(controller)
         updateActivationPolicy()
         controller.showWindow(nil)
@@ -31,7 +40,25 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         return controller
     }
 
+    /// For the self-test: a fully built editor that is never shown.
+    static func makeForTesting(image: CapturedImage) -> EditorWindowController {
+        EditorWindowController(image: image, savedURL: nil, annotations: [], badgeCounter: nil, annotationsAreSaved: true)
+    }
+
+    func closeForTesting() {
+        closeConfirmed = true
+        window?.close()
+    }
+
     static func open(fileURL: URL) {
+        // A file SnapMark saved with annotations comes back editable.
+        if let data = try? Data(contentsOf: fileURL), let project = ProjectStore.load(fileData: data) {
+            let controller = open(image: project.image, savedURL: fileURL, annotations: project.document.annotations,
+                                  badgeCounter: project.document.badgeCounter)
+            controller.state.tool = .select
+            controller.state.showStatus(L("editor.status_restored"), duration: 6)
+            return
+        }
         guard let nsImage = NSImage(contentsOf: fileURL), let cg = nsImage.cgImageAnyScale else {
             Toast.show(icon: "exclamationmark.triangle.fill", text: L("toast.open_failed"))
             return
@@ -61,8 +88,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    private init(image: CapturedImage, savedURL: URL?) {
-        state = EditorState(image: image, originalURL: savedURL)
+    private init(image: CapturedImage, savedURL: URL?, annotations: [Annotation], badgeCounter: Int?,
+                 annotationsAreSaved: Bool) {
+        state = EditorState(image: image, originalURL: savedURL, annotations: annotations,
+                            badgeCounter: badgeCounter, annotationsAreSaved: annotationsAreSaved)
 
         let pointSize = image.pointSize
         let screenFrame = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
@@ -82,6 +111,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
 
         let actions = EditorActions(
+            done: { [weak self] in self?.done() },
             save: { [weak self] in self?.save() },
             saveAs: { [weak self] in self?.saveAs() },
             copy: { [weak self] in self?.copyToClipboard() },
@@ -114,18 +144,28 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: Actions
 
-    func save() {
+    /// What it takes to reopen a saved file with live annotations.
+    private var projectSource: ProjectStore.Source? {
+        state.commitTextEditing()
+        guard !state.annotations.isEmpty else { return nil }
+        return ProjectStore.Source(base: state.base, scale: state.scale,
+                                   annotations: state.annotations, badgeCounter: state.badgeCounter)
+    }
+
+    @discardableResult
+    func save() -> Bool {
         let settings = Settings.shared
         let url = state.originalURL ?? settings.nextFileURL(ext: settings.imageFormat.fileExtension)
-        guard ImageFile.write(state.flattenedCapture(), to: url) else {
+        guard ImageFile.write(state.flattenedCapture(), to: url, project: projectSource) else {
             Toast.show(icon: "exclamationmark.triangle.fill", text: L("toast.save_failed"))
-            return
+            return false
         }
         state.originalURL = url
         state.markSaved()
         updateTitle()
         HistoryManager.shared.add(fileURL: url, kind: .image)
         state.showStatus(L("editor.status_saved", url.lastPathComponent))
+        return true
     }
 
     func saveAs() {
@@ -138,7 +178,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             ?? "SnapMark.\(Settings.shared.imageFormat.fileExtension)"
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
-            guard ImageFile.write(self.state.flattenedCapture(), to: url) else {
+            guard ImageFile.write(self.state.flattenedCapture(), to: url, project: self.projectSource) else {
                 Toast.show(icon: "exclamationmark.triangle.fill", text: L("toast.save_failed"))
                 return
             }
@@ -148,6 +188,24 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             HistoryManager.shared.add(fileURL: url, kind: .image)
             self.state.showStatus(L("editor.status_saved", url.lastPathComponent))
         }
+    }
+
+    /// Finish in one step: copy the result, keep the file up to date, close without asking.
+    func done() {
+        state.commitTextEditing()
+        let image = state.flattenedCapture()
+        Clipboard.copy(image: image.cgImage, scale: image.scale)
+        var savedName: String?
+        let needsWrite = state.originalURL == nil ? Settings.shared.autoSaveToDisk : state.isDirty
+        if needsWrite {
+            guard save() else { return } // stay open if the file could not be written
+            savedName = state.originalURL?.lastPathComponent
+        }
+        closeConfirmed = true
+        window?.close()
+        Toast.show(icon: "checkmark.circle.fill",
+                   text: savedName == nil ? L("toast.copied") : L("toast.copied_saved"),
+                   subtitle: savedName)
     }
 
     func copyToClipboard() {
@@ -183,55 +241,55 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// Physical key codes, so shortcuts work under any keyboard layout or IME
-    /// (with 注音/拼音 active, `characters` returns Zhuyin/Pinyin glyphs instead of letters).
-    private enum Key {
-        static let a: UInt16 = 0, s: UInt16 = 1, h: UInt16 = 4, z: UInt16 = 6, c: UInt16 = 8, v: UInt16 = 9, u: UInt16 = 32, i: UInt16 = 34
-        static let b: UInt16 = 11, w: UInt16 = 13, e: UInt16 = 14, r: UInt16 = 15, t: UInt16 = 17
-        static let equal: UInt16 = 24, nine: UInt16 = 25, minus: UInt16 = 27, zero: UInt16 = 29
-        static let p: UInt16 = 35, l: UInt16 = 37, m: UInt16 = 46, ret: UInt16 = 36, esc: UInt16 = 53
-        static let delete: UInt16 = 51, fwdDelete: UInt16 = 117
-        static let left: UInt16 = 123, right: UInt16 = 124, down: UInt16 = 125, up: UInt16 = 126
-    }
+    private typealias Key = EditorState.Key
 
-    private static let toolKeys: [UInt16: Tool] = [
-        Key.v: .select, Key.p: .pen, Key.h: .highlighter, Key.l: .line, Key.a: .arrow,
-        Key.r: .rect, Key.e: .ellipse, Key.t: .text, Key.m: .mosaic, Key.b: .badge, Key.c: .crop,
-    ]
+    /// Typing undo inside the open text box, if it has any.
+    private var editingTextView: EditingTextView? { window?.firstResponder as? EditingTextView }
 
-    private func handleKey(_ event: NSEvent) -> Bool {
-        // Arrow keys carry .function/.numericPad; strip them so "shift + arrow" compares cleanly.
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.function, .numericPad])
+    func handleKey(_ event: NSEvent) -> Bool {
+        let flags = EditorState.cleanFlags(event)
         let code = event.keyCode
 
-        // While editing text: Escape commits; ⌘B/I/U and ⌥⌘↑↓ restyle; everything else is typing.
+        // While typing: ⌘Z first undoes the typing, then the document; Esc / ↩ finish (handled by the
+        // text view); ⌘B/I/U and ⌥⌘↑↓ restyle; everything else is text input.
         if state.editingTextID != nil {
+            if code == Key.z, flags == [.command] {
+                if let um = editingTextView?.undoManager, um.canUndo { um.undo() } else { state.undo() }
+                return true
+            }
+            if code == Key.z, flags == [.command, .shift] {
+                if let um = editingTextView?.undoManager, um.canRedo { um.redo() } else { state.redo() }
+                return true
+            }
             if code == Key.esc {
                 state.commitTextEditing()
                 return true
             }
-            if handleTextStyleShortcut(code: code, flags: flags) { return true }
-            return false
+            if flags == [.command], code == Key.ret || code == Key.enter {
+                done()
+                return true
+            }
+            return state.handleTextStyleShortcut(code: code, flags: flags)
         }
-        if state.inspectedIsText, handleTextStyleShortcut(code: code, flags: flags) { return true }
-        // Let native text fields (save panel, popovers) work normally.
+        // Let native text fields (save panel, popovers, font search) work normally.
         if window?.firstResponder is NSTextView { return false }
+
+        if state.handleAnnotationKey(code: code, flags: flags) { return true }
 
         if flags == [.command] {
             switch code {
-            case Key.z: state.undo(); return true
             case Key.c: copyToClipboard(); return true
             case Key.s: save(); return true
             case Key.equal: state.setZoom(state.zoom * 1.25); return true
             case Key.minus: state.setZoom(state.zoom / 1.25); return true
             case Key.zero: state.setZoom(1); return true
             case Key.nine: state.zoomToFit(); return true
+            case Key.ret, Key.enter: done(); return true
             default: break
             }
         }
         if flags == [.command, .shift] {
             switch code {
-            case Key.z: state.redo(); return true
             case Key.s: saveAs(); return true
             case Key.equal: state.setZoom(state.zoom * 1.25); return true // ⌘+ on US layouts
             default: break
@@ -239,9 +297,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         }
         if flags.isEmpty || flags == [.shift] {
             switch code {
-            case Key.delete, Key.fwdDelete:
-                state.deleteSelected()
-                return true
             case Key.esc:
                 if state.tool == .crop { state.cropRect = nil; state.tool = .select; return true }
                 if state.selectedID != nil { state.selectedID = nil; return true }
@@ -249,42 +304,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             case Key.ret where state.tool == .crop && state.cropRect != nil:
                 state.applyCrop()
                 return true
-            case Key.left, Key.right, Key.down, Key.up:
-                guard state.selectedID != nil else { return false }
-                let step: CGFloat = (flags == [.shift] ? 10 : 1) * state.scale
-                switch code {
-                case Key.left: state.nudgeSelected(dx: -step, dy: 0)
-                case Key.right: state.nudgeSelected(dx: step, dy: 0)
-                case Key.down: state.nudgeSelected(dx: 0, dy: step)
-                default: state.nudgeSelected(dx: 0, dy: -step)
-                }
-                return true
             default:
                 break
             }
-            if flags.isEmpty, let tool = Self.toolKeys[code] {
+            if flags.isEmpty, let tool = EditorState.toolKeys[code] {
                 state.tool = tool
                 return true
-            }
-        }
-        return false
-    }
-
-    /// ⌘B bold · ⌘I italic · ⌘U underline · ⌥⌘↑/↓ font size (for the selected or edited text).
-    private func handleTextStyleShortcut(code: UInt16, flags: NSEvent.ModifierFlags) -> Bool {
-        if flags == [.command] {
-            switch code {
-            case Key.b: state.textStyle.bold.toggle(); return true
-            case Key.i: state.textStyle.italic.toggle(); return true
-            case Key.u: state.textStyle.underline.toggle(); return true
-            default: return false
-            }
-        }
-        if flags == [.command, .option] {
-            switch code {
-            case Key.up: state.adjustFontSize(by: 2); return true
-            case Key.down: state.adjustFontSize(by: -2); return true
-            default: return false
             }
         }
         return false
@@ -305,8 +330,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             guard let self else { return }
             switch response {
             case .alertFirstButtonReturn:
-                self.save()
-                guard !self.state.isDirty else { return } // save failed; stay open
+                guard self.save() else { return } // save failed; stay open
                 self.closeConfirmed = true
                 sender.close()
             case .alertSecondButtonReturn:

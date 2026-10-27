@@ -68,7 +68,7 @@ enum Tool: String, CaseIterable, Identifiable {
     }
 }
 
-enum TextAlign: String, CaseIterable, Equatable {
+enum TextAlign: String, CaseIterable, Equatable, Codable {
     case left, center, right
     var ns: NSTextAlignment {
         switch self {
@@ -80,7 +80,7 @@ enum TextAlign: String, CaseIterable, Equatable {
 }
 
 /// Typography for text annotations. `fontFamily == nil` means the system font.
-struct TextStyle: Equatable {
+struct TextStyle: Equatable, Codable {
     var fontFamily: String? = nil
     var bold: Bool = true
     var italic: Bool = false
@@ -120,8 +120,8 @@ struct TextStyle: Equatable {
 }
 
 /// One drawn element. All coordinates are in image PIXEL space, top-left origin.
-struct Annotation: Identifiable, Equatable {
-    enum Kind: Equatable { case pen, highlighter, line, arrow, rect, ellipse, text, mosaic, badge }
+struct Annotation: Identifiable, Equatable, Codable {
+    enum Kind: String, Equatable, Codable { case pen, highlighter, line, arrow, rect, ellipse, text, mosaic, badge }
 
     var id = UUID()
     var kind: Kind
@@ -446,15 +446,17 @@ final class FilteredImageCache {
     private(set) var blurred: CGImage?
     private var sourceID: ObjectIdentifier?
 
-    func prepare(for image: CGImage) {
+    /// Mosaic block and blur sizes are fixed in points (not relative to the image), so the overlay's
+    /// full-screen preview, the cropped export and the editor all show the same strength.
+    func prepare(for image: CGImage, scale: CGFloat = 2) {
         let id = ObjectIdentifier(image)
         guard sourceID != id else { return }
         sourceID = id
         let ci = CIImage(cgImage: image)
 
         let pixellate = CIFilter.pixellate()
-        pixellate.inputImage = ci
-        pixellate.scale = Float(max(12, min(image.width, image.height) / 55))
+        pixellate.inputImage = ci.clampedToExtent()
+        pixellate.scale = Float(max(6, (10 * scale).rounded()))
         pixellate.center = .zero
         if let out = pixellate.outputImage?.cropped(to: ci.extent) {
             pixelated = Self.ciContext.createCGImage(out, from: ci.extent)
@@ -462,10 +464,34 @@ final class FilteredImageCache {
 
         let blur = CIFilter.gaussianBlur()
         blur.inputImage = ci.clampedToExtent()
-        blur.radius = Float(max(10, min(image.width, image.height) / 90))
+        blur.radius = Float(max(6, 8 * scale))
         if let out = blur.outputImage?.cropped(to: ci.extent) {
             blurred = Self.ciContext.createCGImage(out, from: ci.extent)
         }
+    }
+}
+
+extension AnnotationRenderer {
+    /// Base + annotations as one image (annotations in the base's pixel space).
+    static func flatten(base: CGImage, scale: CGFloat, annotations: [Annotation],
+                        crop: CGRect? = nil, filters: FilteredImageCache = FilteredImageCache()) -> CGImage {
+        let full = CGRect(x: 0, y: 0, width: base.width, height: base.height)
+        let r = (crop ?? full).integral.intersection(full)
+        let w = max(1, Int(r.width)), h = max(1, Int(r.height))
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return base }
+        ctx.interpolationQuality = .high
+        ctx.translateBy(x: 0, y: CGFloat(h))
+        ctx.scaleBy(x: 1, y: -1)
+        ctx.translateBy(x: -r.minX, y: -r.minY)
+        drawImageInFlippedContext(base, rect: full, in: ctx)
+        if annotations.contains(where: { $0.kind == .mosaic }) {
+            filters.prepare(for: base, scale: scale)
+        }
+        render(annotations, in: ctx, imageSize: full.size, pixelated: filters.pixelated, blurred: filters.blurred)
+        return ctx.makeImage() ?? base
     }
 }
 
@@ -529,5 +555,215 @@ extension Annotation {
             best = min(best, distanceToSegment(p, pts[i], pts[i + 1]))
         }
         return best
+    }
+}
+
+// MARK: - Selection handles & geometric transforms
+
+/// A grab point on a selected annotation (or the crop rectangle). Box positions are visual
+/// (top = smaller y in the top-left-origin pixel space).
+enum AnnotationHandle: Equatable, CaseIterable {
+    case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left
+    case lineStart, lineEnd
+
+    var isCorner: Bool { self == .topLeft || self == .topRight || self == .bottomLeft || self == .bottomRight }
+
+    static let boxHandles: [AnnotationHandle] = [.topLeft, .top, .topRight, .right, .bottomRight, .bottom, .bottomLeft, .left]
+    static let cornerHandles: [AnnotationHandle] = [.topLeft, .topRight, .bottomRight, .bottomLeft]
+}
+
+extension CGRect {
+    /// Position of a box handle on this rect.
+    func point(for handle: AnnotationHandle) -> CGPoint {
+        switch handle {
+        case .topLeft: return CGPoint(x: minX, y: minY)
+        case .top: return CGPoint(x: midX, y: minY)
+        case .topRight: return CGPoint(x: maxX, y: minY)
+        case .right: return CGPoint(x: maxX, y: midY)
+        case .bottomRight: return CGPoint(x: maxX, y: maxY)
+        case .bottom: return CGPoint(x: midX, y: maxY)
+        case .bottomLeft: return CGPoint(x: minX, y: maxY)
+        case .left: return CGPoint(x: minX, y: midY)
+        case .lineStart, .lineEnd: return center
+        }
+    }
+
+    /// The point that stays put while `handle` is dragged.
+    func anchor(for handle: AnnotationHandle) -> CGPoint {
+        switch handle {
+        case .topLeft: return point(for: .bottomRight)
+        case .top: return point(for: .bottom)
+        case .topRight: return point(for: .bottomLeft)
+        case .right: return point(for: .left)
+        case .bottomRight: return point(for: .topLeft)
+        case .bottom: return point(for: .top)
+        case .bottomLeft: return point(for: .topRight)
+        case .left: return point(for: .right)
+        case .lineStart, .lineEnd: return center
+        }
+    }
+
+    /// Edges after dragging `handle` by `delta`, as (x0, y0, x1, y1). Not normalized, so a drag past
+    /// the opposite edge yields a mirrored box.
+    func draggedEdges(_ handle: AnnotationHandle, by d: CGPoint) -> (CGFloat, CGFloat, CGFloat, CGFloat) {
+        var x0 = minX, y0 = minY, x1 = maxX, y1 = maxY
+        switch handle {
+        case .topLeft: x0 += d.x; y0 += d.y
+        case .top: y0 += d.y
+        case .topRight: x1 += d.x; y0 += d.y
+        case .right: x1 += d.x
+        case .bottomRight: x1 += d.x; y1 += d.y
+        case .bottom: y1 += d.y
+        case .bottomLeft: x0 += d.x; y1 += d.y
+        case .left: x0 += d.x
+        case .lineStart, .lineEnd: break
+        }
+        return (x0, y0, x1, y1)
+    }
+}
+
+extension Tool {
+    /// Freehand tools always draw, even over existing annotations (repainting a mosaic or
+    /// highlighting across a box is common); everything else grabs what it is pressed on.
+    var isFreehand: Bool { self == .pen || self == .highlighter || self == .mosaic }
+}
+
+extension Annotation {
+    enum HandleLayout { case endpoints, corners, box }
+
+    var handleLayout: HandleLayout {
+        switch kind {
+        case .line, .arrow: return .endpoints
+        case .text, .badge: return .corners // these scale uniformly
+        case .pen, .highlighter, .mosaic, .rect, .ellipse: return .box
+        }
+    }
+
+    /// Geometric extent without stroke padding — what the handles sit on and what resizing maps.
+    var frame: CGRect {
+        switch kind {
+        case .pen, .highlighter, .mosaic:
+            guard let first = points.first else { return .zero }
+            var minX = first.x, minY = first.y, maxX = first.x, maxY = first.y
+            for p in points {
+                minX = min(minX, p.x); minY = min(minY, p.y)
+                maxX = max(maxX, p.x); maxY = max(maxY, p.y)
+            }
+            return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        case .line, .arrow, .rect, .ellipse:
+            return CGRect(corner: start, corner: end)
+        case .text:
+            return textBox
+        case .badge:
+            let r = badgeRadius
+            return CGRect(x: start.x - r, y: start.y - r, width: r * 2, height: r * 2)
+        }
+    }
+
+    func handlePoints() -> [(AnnotationHandle, CGPoint)] {
+        switch handleLayout {
+        case .endpoints:
+            return [(.lineStart, start), (.lineEnd, end)]
+        case .corners:
+            let f = frame
+            return AnnotationHandle.cornerHandles.map { ($0, f.point(for: $0)) }
+        case .box:
+            let f = frame
+            // A stroke that is (nearly) a straight horizontal/vertical line has no extent on one
+            // axis; handles that would only stack on top of each other are left out.
+            return AnnotationHandle.boxHandles.compactMap { h in
+                if f.width < 2, h != .top, h != .bottom { return nil }
+                if f.height < 2, h != .left, h != .right { return nil }
+                return (h, f.point(for: h))
+            }
+        }
+    }
+
+    /// This annotation after dragging `handle` by `delta` pixels. `keepAspect` (⇧) keeps the
+    /// proportions on corner handles and snaps line endpoints to 45°.
+    func resized(_ handle: AnnotationHandle, by delta: CGPoint, keepAspect: Bool) -> Annotation {
+        var a = self
+        switch handleLayout {
+        case .endpoints:
+            if handle == .lineStart {
+                let p = CGPoint(x: start.x + delta.x, y: start.y + delta.y)
+                a.start = keepAspect ? Self.snap45(from: end, to: p) : p
+            } else if handle == .lineEnd {
+                let p = CGPoint(x: end.x + delta.x, y: end.y + delta.y)
+                a.end = keepAspect ? Self.snap45(from: start, to: p) : p
+            }
+        case .box:
+            let f = frame
+            var (x0, y0, x1, y1) = f.draggedEdges(handle, by: delta)
+            if keepAspect, handle.isCorner, f.width >= 2, f.height >= 2 {
+                let anchor = f.anchor(for: handle)
+                let corner = f.point(for: handle)
+                let s = Self.projectedScale(anchor: anchor, corner: corner,
+                                            moved: CGPoint(x: corner.x + delta.x, y: corner.y + delta.y))
+                let nx = anchor.x + (corner.x - anchor.x) * s, ny = anchor.y + (corner.y - anchor.y) * s
+                switch handle {
+                case .topLeft: x0 = nx; y0 = ny
+                case .topRight: x1 = nx; y0 = ny
+                case .bottomLeft: x0 = nx; y1 = ny
+                default: x1 = nx; y1 = ny
+                }
+            }
+            a.mapGeometry(from: f, x0: x0, y0: y0, x1: x1, y1: y1)
+        case .corners:
+            let f = frame
+            let anchor = f.anchor(for: handle)
+            let corner = f.point(for: handle)
+            let factor = max(0.05, Self.projectedScale(anchor: anchor, corner: corner,
+                                                       moved: CGPoint(x: corner.x + delta.x, y: corner.y + delta.y)))
+            let dirX: CGFloat = corner.x >= anchor.x ? 1 : -1
+            let dirY: CGFloat = corner.y >= anchor.y ? 1 : -1
+            if kind == .text {
+                a.fontSize = min(800, max(6, fontSize * factor))
+                let size = a.measuredTextSize()
+                a.start = CGPoint(x: dirX > 0 ? anchor.x : anchor.x - size.width,
+                                  y: dirY > 0 ? anchor.y : anchor.y - size.height)
+            } else if kind == .badge {
+                let radius = min(400, max(15, badgeRadius * factor))
+                a.lineWidth = max(0.5, (radius - 14) / 1.6)
+                let r = a.badgeRadius
+                a.start = CGPoint(x: anchor.x + dirX * r, y: anchor.y + dirY * r)
+            }
+        }
+        return a
+    }
+
+    /// Maps the geometry from frame `f` onto the (possibly mirrored) box x0…x1 × y0…y1.
+    mutating func mapGeometry(from f: CGRect, x0: CGFloat, y0: CGFloat, x1: CGFloat, y1: CGFloat) {
+        // A degenerate axis (straight stroke) can't be scaled; it only moves with its edge.
+        func mx(_ x: CGFloat) -> CGFloat {
+            f.width < 0.5 ? x + ((x0 + x1) / 2 - f.midX) : x0 + (x - f.minX) / f.width * (x1 - x0)
+        }
+        func my(_ y: CGFloat) -> CGFloat {
+            f.height < 0.5 ? y + ((y0 + y1) / 2 - f.midY) : y0 + (y - f.minY) / f.height * (y1 - y0)
+        }
+        switch kind {
+        case .pen, .highlighter, .mosaic:
+            points = points.map { CGPoint(x: mx($0.x), y: my($0.y)) }
+        case .line, .arrow, .rect, .ellipse:
+            start = CGPoint(x: mx(start.x), y: my(start.y))
+            end = CGPoint(x: mx(end.x), y: my(end.y))
+        case .text, .badge:
+            break
+        }
+    }
+
+    /// How far `moved` lies along the anchor→corner diagonal (1 = unchanged).
+    static func projectedScale(anchor: CGPoint, corner: CGPoint, moved: CGPoint) -> CGFloat {
+        let vx = corner.x - anchor.x, vy = corner.y - anchor.y
+        let len2 = vx * vx + vy * vy
+        guard len2 > 0.0001 else { return 1 }
+        return ((moved.x - anchor.x) * vx + (moved.y - anchor.y) * vy) / len2
+    }
+
+    static func snap45(from origin: CGPoint, to p: CGPoint) -> CGPoint {
+        let dx = p.x - origin.x, dy = p.y - origin.y
+        let angle = (atan2(dy, dx) / (.pi / 4)).rounded() * (.pi / 4)
+        let len = hypot(dx, dy)
+        return CGPoint(x: origin.x + cos(angle) * len, y: origin.y + sin(angle) * len)
     }
 }

@@ -60,32 +60,38 @@ extension NSImage {
 // MARK: - Image files
 
 enum ImageFile {
-    /// Writes `image` to `url`, choosing PNG/JPEG from the extension. Returns false on failure.
-    @discardableResult
-    static func write(_ image: CapturedImage, to url: URL) -> Bool {
-        let ext = url.pathExtension.lowercased()
-        let data: Data?
+    /// PNG or JPEG bytes for `ext`, with the Retina DPI embedded.
+    static func encode(_ image: CapturedImage, ext: String) -> Data? {
+        let ext = ext.lowercased()
         if ext == "jpg" || ext == "jpeg" {
-            data = image.cgImage.jpegData(quality: Settings.shared.jpegQuality, scale: image.scale)
-        } else {
-            data = image.cgImage.pngData(scale: image.scale)
+            return image.cgImage.jpegData(quality: Settings.shared.jpegQuality, scale: image.scale)
         }
-        guard let data else { return false }
+        return image.cgImage.pngData(scale: image.scale)
+    }
+
+    /// Writes `image` to `url`, choosing PNG/JPEG from the extension. Returns false on failure.
+    /// With a `project`, the annotations stay editable when the file is opened again.
+    @discardableResult
+    static func write(_ image: CapturedImage, to url: URL, project: ProjectStore.Source? = nil) -> Bool {
+        guard let data = encode(image, ext: url.pathExtension) else { return false }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
-            return true
         } catch {
             NSLog("SnapMark: write failed \(url.path): \(error)")
             return false
         }
+        if let project, !project.annotations.isEmpty {
+            ProjectStore.save(fileData: data, source: project)
+        }
+        return true
     }
 
     /// Saves to the user's capture folder using the current format & filename template.
-    static func saveToCaptureFolder(_ image: CapturedImage) -> URL? {
+    static func saveToCaptureFolder(_ image: CapturedImage, project: ProjectStore.Source? = nil) -> URL? {
         let settings = Settings.shared
         let url = settings.nextFileURL(ext: settings.imageFormat.fileExtension)
-        return write(image, to: url) ? url : nil
+        return write(image, to: url, project: project) ? url : nil
     }
 }
 

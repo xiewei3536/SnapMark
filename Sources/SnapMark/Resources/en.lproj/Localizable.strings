@@ -24,7 +24,7 @@
 
 /* Selection overlay */
 "overlay.hint" = "Drag to select an area · Click a window to snap · Esc to cancel";
-"overlay.hint_window" = "Click a window to capture it · Esc to cancel";
+"overlay.hint_window" = "Click a window to select it (double-click to finish) · or drag an area · Esc to cancel";
 "overlay.capture" = "Capture";
 "overlay.record" = "Record";
 "overlay.pin" = "Pin";
@@ -82,12 +82,12 @@
 "editor.zoom_out" = "Zoom out (⌘−)";
 "editor.fit" = "Fit";
 
-"hint.select" = "Click to select · drag to move · corners resize · double-click text to edit · toolbar restyles the selection · ⌫ delete";
-"hint.draw" = "Drag to draw";
-"hint.shape" = "Drag to draw · hold ⇧ for square / 45°";
-"hint.text" = "Click to add text · ⇧↩ new line · drag ⠿ to move · drag the corner to resize · ↩ / Esc done";
-"hint.badge" = "Click to place numbered steps ①②③";
-"hint.crop" = "Drag to choose the crop area, then Apply";
+"hint.select" = "Click to select · drag to move · drag handles to resize / stretch · double-click text to edit · right-click for more · ⌫ delete";
+"hint.draw" = "Drag to draw · drag a selection's handles to resize · ⌘-drag moves an existing mark";
+"hint.shape" = "Drag to draw · ⇧ square / 45° · drag a mark to move it, its handles to stretch it";
+"hint.text" = "Click to add text · ⇧↩ new line · drag the frame to move · drag a corner to resize · ↩ / Esc done";
+"hint.badge" = "Click to place numbered steps ①②③ · drag to move, corners to resize";
+"hint.crop" = "Drag to choose the crop area, move or reshape it, then Apply";
 
 /* Pin */
 "pin.edit" = "Annotate";
@@ -128,10 +128,10 @@
 "prefs.about" = "About";
 "prefs.language" = "Language";
 "prefs.launch_at_login" = "Launch at login";
-"prefs.after_capture" = "After capture";
+"prefs.after_capture" = "When a capture is done";
 "prefs.after_capture_action" = "Then";
 "settings.after.editor" = "Open the editor";
-"settings.after.copy_only" = "Just notify";
+"settings.after.copy_only" = "Just notify (no window)";
 "settings.after.pin" = "Pin to screen";
 "prefs.auto_copy" = "Copy to clipboard automatically";
 "prefs.auto_save" = "Save to folder automatically";
@@ -259,3 +259,29 @@
 "text.shadow_help" = "Soft drop shadow";
 "text.grip_help" = "Drag to move";
 "text.scale_help" = "Drag to resize";
+
+/* 1.3 in-place annotation, move / stretch, re-editable */
+"overlay.done" = "Done";
+"overlay.done_help" = "Done: copy and save";
+"overlay.edit" = "Open in the editor (marks stay editable)";
+"overlay.save" = "Save to folder";
+"overlay.window_snapped" = "window";
+"overlay.hint_selected_annotate" = "Pick a tool to mark up right here · ↩ or double-click to finish · ⌘C copy · drag edges to adjust · Esc cancel";
+"overlay.hint_annotating" = "Drag to draw · drag a mark to move it, its handles to stretch it · ⌘Z undo · ↩ done · click the active tool again to adjust the area";
+"editor.done" = "Done";
+"editor.done_help" = "Copy to the clipboard, save and close";
+"editor.clear_all" = "Remove all marks";
+"editor.clear_all_help" = "Clear every annotation and get the original back (undoable)";
+"editor.status_restored" = "Your annotations are back — move, change or undo them";
+"ctx.edit_text" = "Edit Text";
+"ctx.duplicate" = "Duplicate";
+"ctx.front" = "Bring to Front";
+"ctx.back" = "Send to Back";
+"ctx.delete" = "Delete";
+"style.badge_size" = "Badge size";
+"style.brush" = "Brush size";
+"toast.copied_saved" = "Copied and saved";
+"settings.after.preview" = "Show a thumbnail (fades away)";
+"preview.annotate" = "Mark up";
+"prefs.after_capture_note" = "Area and window captures are annotated right on the selection; ↩ or Done copies / saves — no window to close.";
+"overlay.esc_again" = "Press Esc again to discard this capture and its marks";
